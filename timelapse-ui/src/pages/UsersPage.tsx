@@ -11,6 +11,7 @@ import { useAbortPasskeyOnLeave, withPasskeyDeadline } from '../lib/passkey'
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { InfoTooltip } from '../components/InfoTooltip'
+import { CustomerMultiSelect } from '../components/CustomerMultiSelect'
 
 const ROLES = ['super_admin', 'admin', 'operator', 'viewer'] as const
 type Role = typeof ROLES[number]
@@ -52,6 +53,7 @@ interface UserRec {
   email?: string
   role: Role
   customer_id?: string
+  customer_ids?: string[]
   is_active: boolean
   created_at: string
   last_login?: string
@@ -292,7 +294,7 @@ export default function UsersPage() {
   const [newPw,     setNewPw]     = useState('')
   const [showPw,    setShowPw]    = useState(false)
   const [newRole,   setNewRole]   = useState<Role>('viewer')
-  const [newCust,   setNewCust]   = useState('')
+  const [newCusts,  setNewCusts]  = useState<string[]>([])
   const [newFieldRole, setNewFieldRole] = useState<'none' | 'installer' | 'technician'>('none')
   const [creating,  setCreating]  = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
@@ -304,7 +306,7 @@ export default function UsersPage() {
   const [editId,     setEditId]     = useState<number | null>(null)
   const [editRole,   setEditRole]   = useState<Role>('viewer')
   const [editEmail,  setEditEmail]  = useState('')
-  const [editCust,   setEditCust]   = useState('')
+  const [editCusts,  setEditCusts]  = useState<string[]>([])
   const [editActive, setEditActive] = useState(true)
   const [editFieldRole, setEditFieldRole] = useState<'none' | 'installer' | 'technician'>('none')
   const [editErr,    setEditErr]    = useState<string | null>(null)
@@ -381,12 +383,12 @@ export default function UsersPage() {
           password:    newPw,
           role:        newRole,
           email:       newEmail || `${newUser}@timelapse.local`,
-          customer_id: newCust || null,
+          customer_ids: newCusts,
           field_role: newFieldRole,
         }),
       })
       setShowNew(false)
-      setNewUser(''); setNewPw(''); setNewEmail(''); setNewRole('viewer'); setNewCust(''); setNewFieldRole('none')
+      setNewUser(''); setNewPw(''); setNewEmail(''); setNewRole('viewer'); setNewCusts([]); setNewFieldRole('none')
       load()
     } catch (e: any) { setCreateErr(e.message) }
     finally { setCreating(false) }
@@ -403,7 +405,7 @@ export default function UsersPage() {
     setEditId(u.id)
     setEditRole(u.role)
     setEditEmail(u.email ?? '')
-    setEditCust(u.customer_id ?? '')
+    setEditCusts(u.customer_ids ?? (u.customer_id ? [u.customer_id] : []))
     setEditActive(u.is_active)
     setEditFieldRole(u.field_role ?? 'none')
     setEditErr(null)
@@ -414,7 +416,7 @@ export default function UsersPage() {
     try {
       await api(`/api/admin/users/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_id: editCust || null, is_active: editActive, field_role: editFieldRole })
+        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_ids: editCusts, is_active: editActive, field_role: editFieldRole })
       })
       setEditId(null)
       load()
@@ -658,15 +660,8 @@ export default function UsersPage() {
               </p>
             </div>
             <div className="col-span-2">
-              <label className="text-xs text-gray-500 mb-1 block">Tilknyt kunde (valgfrit)</label>
-              <select value={newCust} onChange={e => setNewCust(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
-                <option value="">Alle kunder (global adgang)</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <p className="text-xs text-gray-400 mt-1">
-                Begrænser brugeren til kun at se og administrere den valgte kundes data.
-              </p>
+              <label className="text-xs text-gray-500 mb-1 block">Tilknyttede kunder</label>
+              <CustomerMultiSelect customers={customers} value={newCusts} onChange={setNewCusts} role={newRole} />
             </div>
             <div className="col-span-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
               <label className="text-xs text-sky-900 font-medium block mb-1">Felt-rolle (on-site adgang)</label>
@@ -728,11 +723,11 @@ export default function UsersPage() {
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 whitespace-nowrap ${ROLE_COLORS[u.role]}`}>
                     {ROLE_LABELS[u.role]}
                   </span>
-                  {u.customer_id && (
-                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">
-                      {customers.find(c => c.id === u.customer_id)?.name ?? 'Kunde'}
+                  {(u.customer_ids ?? (u.customer_id ? [u.customer_id] : [])).map(cid => (
+                    <span key={cid} className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">
+                      {customers.find(c => c.id === cid)?.name ?? 'Kunde'}
                     </span>
-                  )}
+                  ))}
                   {!u.is_active && (
                     <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Deaktiveret</span>
                   )}
@@ -799,12 +794,8 @@ export default function UsersPage() {
                           className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-300" />
                       </div>
                       <div>
-                        <label className="text-xs text-gray-400 mb-1 block">Kunde</label>
-                        <select value={editCust} onChange={e => setEditCust(e.target.value)}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-300">
-                          <option value="">Global adgang</option>
-                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                        <label className="text-xs text-gray-400 mb-1 block">Kunder</label>
+                        <CustomerMultiSelect customers={customers} value={editCusts} onChange={setEditCusts} role={editRole} compact />
                       </div>
                       <div className="flex items-end pb-0.5">
                         <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600">

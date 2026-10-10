@@ -50,7 +50,7 @@ from typing import Optional
 from database import Camera, Customer, Device, DeviceAssignment, Site, User, get_db, now_utc
 from auth import get_current_user, require_role
 from tenant_scope import (
-    _is_platform_admin, _has_field_access,
+    _allowed_customer_ids, _is_platform_admin, _has_field_access,
     _ensure_customer_access, _ensure_site_access,
     _visible_camera_query,
 )
@@ -305,7 +305,8 @@ def get_camera_bt_totp_qr(
     if not is_admin:
         if not _has_field_access(current_user):
             raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
-        if current_user.customer_id and str(cam.customer_id) != str(current_user.customer_id):
+        allowed = _allowed_customer_ids(db, current_user)
+        if allowed is not None and str(cam.customer_id) not in allowed:
             raise HTTPException(status_code=403, detail="Kameraet ligger uden for din kundeafgrænsning")
 
     secret, sid, source = _resolve_camera_bt_totp(db, cam)

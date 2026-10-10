@@ -51,7 +51,7 @@ def _make_device(session, device_id, **overrides):
 
 def test_status_reports_not_yet_verifiable(db_session):
     _make_device(db_session, "TL-TEST0001")
-    user = SimpleNamespace(username="admin1", role="admin")
+    user = SimpleNamespace(username="admin1", role="super_admin")
 
     status = commissioning_key.get_commissioning_key_status("TL-TEST0001", _user=user, db=db_session)
 
@@ -63,7 +63,7 @@ def test_status_reports_not_yet_verifiable(db_session):
 def test_status_can_disable_once_verified(db_session):
     from datetime import datetime, timezone
     _make_device(db_session, "TL-TEST0002", servicetekniker_verified_at=datetime.now(timezone.utc))
-    user = SimpleNamespace(username="admin1", role="admin")
+    user = SimpleNamespace(username="admin1", role="super_admin")
 
     status = commissioning_key.get_commissioning_key_status("TL-TEST0002", _user=user, db=db_session)
 
@@ -72,7 +72,7 @@ def test_status_can_disable_once_verified(db_session):
 
 def test_disable_refused_without_verification_evidence(db_session):
     _make_device(db_session, "TL-TEST0003")
-    user = SimpleNamespace(username="admin1", role="admin")
+    user = SimpleNamespace(username="admin1", role="super_admin")
 
     with pytest.raises(HTTPException) as exc_info:
         commissioning_key.disable_commissioning_key("TL-TEST0003", user=user, db=db_session)
@@ -86,7 +86,7 @@ def test_disable_refused_without_verification_evidence(db_session):
 def test_disable_succeeds_once_verified_and_is_recorded(db_session):
     from datetime import datetime, timezone
     _make_device(db_session, "TL-TEST0004", servicetekniker_verified_at=datetime.now(timezone.utc))
-    user = SimpleNamespace(username="admin1", role="admin")
+    user = SimpleNamespace(username="admin1", role="super_admin")
 
     result = commissioning_key.disable_commissioning_key("TL-TEST0004", user=user, db=db_session)
 
@@ -107,7 +107,7 @@ def test_disable_is_idempotent_once_already_disabled(db_session):
         commissioning_key_disabled=True,
         commissioning_key_disabled_by="admin1",
     )
-    user = SimpleNamespace(username="admin2", role="admin")
+    user = SimpleNamespace(username="admin2", role="super_admin")
 
     result = commissioning_key.disable_commissioning_key("TL-TEST0005", user=user, db=db_session)
 
@@ -116,7 +116,7 @@ def test_disable_is_idempotent_once_already_disabled(db_session):
 
 
 def test_status_404_for_unknown_device(db_session):
-    user = SimpleNamespace(username="admin1", role="admin")
+    user = SimpleNamespace(username="admin1", role="super_admin")
     with pytest.raises(HTTPException) as exc_info:
         commissioning_key.get_commissioning_key_status("TL-DOES-NOT-EXIST", _user=user, db=db_session)
     assert exc_info.value.status_code == 404

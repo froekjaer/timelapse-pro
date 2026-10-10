@@ -21,7 +21,7 @@ def test_unassigned_device_inventory_requires_admin_and_is_tenant_scoped():
     )
     assert '_user=require_role("admin")' in block
     assert 'if not _is_platform_admin(_user):' in block
-    assert 'Device.customer_id == _user.customer_id' in block
+    assert 'Device.customer_id.in_(sorted(_allowed_customer_ids(db, _user))' in block
     assert 'Depends(get_current_user)' not in block
 
 
