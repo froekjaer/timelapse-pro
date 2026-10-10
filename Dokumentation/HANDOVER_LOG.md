@@ -29,6 +29,12 @@
 
 ## Log
 
+### Handover 2026-10-10 10:40 — fra Claude til Peter/næste session: lab.63 (wake gennem SSH-tunnel) verificeret live på begge Edges; dobbelt watcher rettet
+
+- **lab.62 Edge2 (#330, 09:40:30):** deployed uden rollback (lab.59→lab.62 direkte). Nye units active, ny unik BT-adresse `02:09:0A:C7:A8:79`, baseline journald+ramlog changed, `ExecStartPre=+…`. Capture 09:50 på NPU'en: `snow_or_dirt_on_lens` 0.81 (shadow), CPU-dom stod (`passed True`, blur 1126). Begge Edges = lab.62 fil-for-fil (130 filer) før lab.63.
+- **lab.63 (#290) live:** Headend `e4aaad20` (09:52), Edge1 #333 09:58:48, Edge2 #332 10:13:33. Begge: `tlwake` oprettet (baseline `wake: changed ['user','ssh_dir']`), `/run/timelapse/wake-request` ejet af tlwake. **Peters LAB-test:** Edge2 LAB til 10:13:49 → wake 10:13:53; fra 10:14:58 → 10:15:01; Edge1 til 10:15:43 → 10:15:45; fra 10:16:36 → 10:16:38 (2–4 s); Edgerne logger "Headend wake via tunnel — synkroniserer nu". Ingen wakes når intet ændres (10:18–10:31 stille; config_version stabil).
+- **Fejl fundet + rettet (ny PR):** hver wake blev sendt to gange — "Edge wake watcher startet" logget 2× 09:52:37 i samme proces: FastAPI kørte routerens startup-handler to gange (kopieret ved include_router og via routerens merged lifespan). `start_edge_wake_watcher()` er nu idempotent (lås + flag). Ufarligt i mellemtiden (Edgen rate-limiter). CI-ækvivalent 1710 passed.
+
 ### Handover 2026-10-10 10:00 — fra Claude til Peter/næste session: lab.62 verificeret på Edge1; wake gennem SSH-tunnelen (Peters design) i stedet for long-poll
 
 - **lab.62 på Edge1 (#331, 08:52:59):** release v2.8.1-lab.62, alle units active, baseline `ramlog: changed`, wrapper sha256 `15c16638…`. **Capture 09:00 på NPU'en i drift:** `edge_qa_viplite_aw_nn_v1, available True, influence shadow` — NPU `white_balance_cast` 0.947, CPU-dom stod (`passed True, cause ok`, blur 1219). Exec-bit selvhelet. Edge2 (#330) klar.

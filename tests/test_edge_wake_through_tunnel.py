@@ -222,3 +222,16 @@ def test_agent_syncs_at_once_on_wake_and_rate_limits(tmp_path, monkeypatch):
     assert a._last_heartbeat == datetime.min.replace(tzinfo=timezone.utc)
     src = (ROOT / "edge/agent.py").read_text(encoding="utf-8")
     assert "if self._wake_event.wait(min(sleep_s, max_idle_sleep)):" in src
+
+
+def test_watcher_starts_once_even_if_startup_runs_twice(monkeypatch):
+    """Live 2026-10-10: FastAPI ran the router's startup handler twice → two
+    watchers → every wake sent twice. The start is idempotent now."""
+    started = []
+    monkeypatch.setattr(ew, "_started", False)
+    monkeypatch.setattr(ew, "_disabled", lambda: False)
+    monkeypatch.setattr(ew.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: started.append(kw["name"])))
+    monkeypatch.setattr(ew, "EdgeWakeWatcher", lambda factory: SimpleNamespace(run_forever=None))
+    assert ew.start_edge_wake_watcher() is True
+    assert ew.start_edge_wake_watcher() is False
+    assert started == ["edge-wake-watcher"]

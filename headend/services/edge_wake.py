@@ -172,12 +172,30 @@ class EdgeWakeWatcher:
             time.sleep(CHECK_INTERVAL_S)
 
 
-def start_edge_wake_watcher() -> None:
+_started = False
+_start_lock = threading.Lock()
+
+
+def _disabled() -> bool:
     import sys
 
-    if "pytest" in sys.modules or os.getenv("TIMELAPSE_EDGE_WAKE", "1").strip().lower() in {"0", "false", "off", "no"}:
-        return
+    return "pytest" in sys.modules or os.getenv("TIMELAPSE_EDGE_WAKE", "1").strip().lower() in {"0", "false", "off", "no"}
+
+
+def start_edge_wake_watcher() -> bool:
+    """Start the watcher once per process. Idempotent: FastAPI ran the router's
+    startup handler twice (copied on include_router *and* via the merged
+    router lifespan), which started two watchers and sent every wake twice
+    (seen live 2026-10-10)."""
+    global _started
+    with _start_lock:
+        if _started:
+            return False
+        _started = True
+    if _disabled():
+        return False
     from database import SessionLocal
 
     threading.Thread(target=EdgeWakeWatcher(SessionLocal).run_forever, name="edge-wake-watcher", daemon=True).start()
     log.info("Edge wake watcher startet (wake gennem SSH-tunnel ved ændringer)")
+    return True
