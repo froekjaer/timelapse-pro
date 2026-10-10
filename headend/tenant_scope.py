@@ -49,6 +49,18 @@ def _is_platform_admin(user: User | None) -> bool:
     return user.role == "super_admin" or (user.role == "admin" and not user.customer_id)
 
 
+def _allowed_customer_ids(db: Session, user: User | None) -> set[str] | None:
+    """Customers the user may act for; None = all (super_admin only).
+
+    Unlike _is_platform_admin above there is no implicit global access for an
+    admin without a customer: no customer means no customer data."""
+    if user is None:
+        return set()
+    if user.role == "super_admin":
+        return None
+    return {str(user.customer_id)} if getattr(user, "customer_id", None) else set()
+
+
 FIELD_ROLES = ("none", "installer", "technician")
 
 

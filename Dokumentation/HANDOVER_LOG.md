@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-10 — fra Claude til Peter/næste session: PR A — opdateringsbeslutninger er kunde-afgrænsede
+
+- **Peter:** "En admin må kun godkende opdateringer for de kunder, vedkommende er autoriseret til … For opdateringer med targets fra flere kunder skal ALLE berørte targets autoriseres … `super_admin` kan godkende på tværs af alle kunder."
+- **Ændring:** ny `headend/services/update_tenant_authority.py`. Godkend, stop, afvis, promote, rollback, change-ticket (opret/godkend/afvis) og compliance-accept kræver, at scope OG alle berørte enheder (inkl. eksisterende target-rækker) ligger i brugerens kunder; ellers 403 og intet skrives. Global scope, ukendte og kundeløse enheder kun `super_admin`. Release-engineering (Headend-deploy, artifact-katalog, OS-bundle build/bind, auto-deploy-evaluering) kun `super_admin`. Ny central `tenant_scope._allowed_customer_ids` (ingen implicit global adgang for admin uden kunde) — PR B udvider den til mange-til-mange.
+- **Tests:** `headend/tests/test_update_approval_tenant_isolation.py` (36). Tre eksisterende testfiler brugte "admin uden kunde" som global bruger → nu `super_admin`. Mutationstjek: fjernes vagterne, fejler 6 tests. Fuld suite: 1755 passed; 4 kendte lokale gpg-fejl.
+- **Prod-data (read-only):** ingen admin-/operator-brugere i dag, så ingen eksisterende bruger mister adgang.
+- **Status:** merged? NEJ. Deployet? NEJ. Afventer uafhængig review.
+
 ### Handover 2026-10-10 11:45 — fra Claude til Peter/næste session: LAB-start viser rigtige trin (feedback) i stedet for gættet nedtælling
 
 - **Peter:** "kan du egentlig også lave, så der kommer nogle feedback step, når man har trykket start lab, så man kan se at der sker noget, og hvor langt den er".
