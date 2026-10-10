@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ai.model_results import engine_from_legacy_payload, upsert_capture_model_result
+from tenant_scope import _is_platform_admin
 
 log = logging.getLogger("headend.ai")
 
@@ -671,7 +672,7 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
     def _require_platform_admin(user) -> None:
         _require_admin(user)
-        if getattr(user, "role", None) != "super_admin" and getattr(user, "customer_id", None):
+        if not _is_platform_admin(user):   # central rule: super_admin only
             raise HTTPException(status_code=403, detail="Kræver platformadministrator")
 
     def _ensure_device_access(db: Session, user, device_id: str) -> None:

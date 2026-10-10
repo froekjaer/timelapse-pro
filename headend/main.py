@@ -109,6 +109,7 @@ from tenant_scope import (
     _is_platform_admin, FIELD_ROLES, _has_field_access,
     _ensure_customer_access, _ensure_site_access,
     _visible_customer_query, _visible_site_query, _visible_device_query,
+    _allowed_customer_ids, _visible_device_ids, user_customer_ids,
 )
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
@@ -127,6 +128,7 @@ from services.update_supersession import device_already_at_update_version, super
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services import update_tenant_authority as _uta
+from services.user_customers import backfill_user_customers as _backfill_user_customers, set_user_customers as _set_user_customers
 from services.config_merge import merge_missing_defaults as _merge_missing_defaults
 from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
 from services.release_candidates import is_newer_release as _is_newer_release, latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
@@ -375,6 +377,7 @@ def _debug_mode_auto_timeout_loop(interval_minutes: float = 15.0) -> None:
 @app.on_event("startup")
 def startup():
     create_tables()
+    _backfill_user_customers(__import__('database').engine)
     if background_jobs_enabled():
         start_headend_log_collector()
     # DB migration — tilføj nye kolonner hvis de mangler
@@ -1229,13 +1232,15 @@ class UserCreateRequest(BaseModel):
     email:       Optional[str] = None
     password:    str
     role:        str = "viewer"
-    customer_id: Optional[str] = None
+    customer_id: Optional[str] = None         # legacy single customer; customer_ids wins
+    customer_ids: Optional[list[str]] = None
     field_role:  str = "none"
 
 class UserUpdateRequest(BaseModel):
     email:       Optional[str] = None
     role:        Optional[str] = None
     customer_id: Optional[str] = None
+    customer_ids: Optional[list[str]] = None
     is_active:   Optional[bool] = None
     field_role:  Optional[str] = None
 
@@ -1701,6 +1706,7 @@ def list_users(
             "email":       u.email,
             "role":        u.role,
             "customer_id": u.customer_id,
+            "customer_ids": sorted(user_customer_ids(u)),
             "is_active":   u.is_active,
             "created_at":  u.created_at.isoformat() if u.created_at else None,
             "last_login":  u.last_login.isoformat() if u.last_login else None,
@@ -1784,9 +1790,9 @@ def create_user(
         email         = req.email,
         password_hash = _hash_password(req.password),
         role          = req.role,
-        customer_id   = req.customer_id,
         field_role    = req.field_role,
     )
+    _set_user_customers(db, u, req.customer_ids if req.customer_ids is not None else [req.customer_id], _user.username)
     db.add(u); db.commit(); db.refresh(u)
     log.info("Bruger oprettet: %s (%s)", u.username, u.role)
     return {"id": u.id, "username": u.username}
@@ -1806,10 +1812,12 @@ def update_user(
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
     if req.field_role and req.field_role not in FIELD_ROLES:
         raise HTTPException(status_code=400, detail="Ugyldig field_role")
-    for field in ["email", "role", "customer_id", "is_active", "field_role"]:
+    for field in ["email", "role", "is_active", "field_role"]:
         val = getattr(req, field)
         if val is not None:
             setattr(u, field, val)
+    if req.customer_ids is not None or "customer_id" in req.model_fields_set:
+        _set_user_customers(db, u, req.customer_ids if req.customer_ids is not None else [req.customer_id], _user.username)
     db.commit()
     return {"ok": True}
 
@@ -2141,7 +2149,7 @@ def list_unassigned_devices(
     if not _is_platform_admin(_user):
         # Tenant-admins må ikke se eller claim'e globale/andre kunders
         # unassigned devices. Platform admin beholder global commissioning.
-        query = query.filter(Device.customer_id == _user.customer_id)
+        query = query.filter(Device.customer_id.in_(sorted(_allowed_customer_ids(db, _user)) or ["__none__"]))
     devices = query.order_by(Device.created_at.desc()).all()
 
     return [
@@ -17035,15 +17043,7 @@ def _query_capture_candidates(db: Session, payload: dict, spec: dict) -> list[Ca
 
 
 def _allowed_capture_device_ids(db: Session, user: User | None) -> set[str] | None:
-    if _is_platform_admin(user):
-        return None
-    if not user or not getattr(user, "customer_id", None):
-        return set()
-    site_ids = [row[0] for row in db.query(Site.id).filter(Site.customer_id == user.customer_id).all()]
-    devices = db.query(Device.device_id).filter(
-        (Device.customer_id == user.customer_id) | (Device.site_id.in_(site_ids))
-    ).all()
-    return {row[0] for row in devices}
+    return _visible_device_ids(db, user)
 
 
 def _capture_tenant_clause(user: User | None, allowed_device_ids: set[str]):
@@ -17072,10 +17072,11 @@ def _capture_tenant_clause(user: User | None, allowed_device_ids: set[str]):
     `IS NULL` af SQLAlchemy og fejlagtigt matche alle endnu ubackfillede rækker på
     tværs af ALLE kunder for sådan en bruger.
     """
-    if not user or not getattr(user, "customer_id", None):
+    customers = sorted(user_customer_ids(user))
+    if not customers:
         return _sql_false()
     return or_(
-        Capture.customer_id == user.customer_id,
+        Capture.customer_id.in_(customers),
         and_(Capture.customer_id.is_(None), Capture.device_id.in_(allowed_device_ids)),
     )
 
@@ -17096,9 +17097,10 @@ app.include_router(create_headend_console_router(get_current_user, _session_payl
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:
-    if _is_platform_admin(user):
+    customers = _allowed_customer_ids(db, user)
+    if customers is None:
         return True
-    if not user or not getattr(user, "customer_id", None):
+    if not customers:
         return False
     # Fase 3 (2026-07-03): foretræk capture.customer_id (frosset ved optagelsestidspunkt)
     # frem for et live device→kunde-opslag — se _capture_tenant_clause() ovenfor for
@@ -17106,7 +17108,7 @@ def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> boo
     # med sig" til en ny kunde).
     capture_customer_id = getattr(capture, "customer_id", None)
     if capture_customer_id:
-        return capture_customer_id == user.customer_id
+        return str(capture_customer_id) in customers
     allowed = _allowed_capture_device_ids(db, user)
     return allowed is None or capture.device_id in allowed
 

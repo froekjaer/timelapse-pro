@@ -54,8 +54,12 @@ def evaluate_policy(request: PolicyRequest) -> PolicyDecision:
         return PolicyDecision(False, f"unknown action denied: {request.action}", decision_id)
     if not request.resource.startswith(KNOWN_RESOURCE_PREFIXES):
         return PolicyDecision(False, f"unknown resource denied: {request.resource}", decision_id)
-    if request.tenant_id and principal.tenant_id and request.tenant_id != principal.tenant_id:
-        return PolicyDecision(False, "tenant boundary denied", decision_id)
+    if request.tenant_id and not principal.global_access:
+        if principal.tenant_ids is not None:
+            if request.tenant_id not in principal.tenant_ids:
+                return PolicyDecision(False, "tenant boundary denied", decision_id)
+        elif principal.tenant_id and request.tenant_id != principal.tenant_id:
+            return PolicyDecision(False, "tenant boundary denied", decision_id)
     if request.mfa_required and not principal.mfa_verified:
         return PolicyDecision(False, "required MFA not verified", decision_id)
     if context.get("headend_session_token") is True and request.action == "grant.validate":
@@ -69,6 +73,8 @@ def evaluate_policy(request: PolicyRequest) -> PolicyDecision:
 
 def principal_from_legacy_user(user, *, mfa_verified: bool = False, capabilities: set[str] | None = None) -> Principal:
     """Build a Trust Service principal from the existing Headend user model."""
+    from tenant_scope import _is_platform_admin, user_customer_ids   # lazy: keep trust/ free of DB imports
+
     derived_capabilities = set(capabilities or set())
     if bool(getattr(user, "on_site_service", False)):
         derived_capabilities.add("edge.service.local_view")
@@ -80,6 +86,8 @@ def principal_from_legacy_user(user, *, mfa_verified: bool = False, capabilities
         tenant_id=getattr(user, "customer_id", None),
         capabilities=frozenset(derived_capabilities),
         mfa_verified=mfa_verified,
+        tenant_ids=frozenset(user_customer_ids(user)),
+        global_access=_is_platform_admin(user),
     )
 
 

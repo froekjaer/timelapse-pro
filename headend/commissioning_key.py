@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 
 from database import Device, get_db, now_utc
 from auth import get_current_user
+from tenant_scope import _ensure_device_access
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ def _status_dict(device: Device) -> dict:
 
 @router.get("/devices/{device_id}/commissioning-key")
 def get_commissioning_key_status(device_id: str, _user=Depends(_require_admin), db: Session = Depends(get_db)):
+    _ensure_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device ikke fundet")
@@ -110,6 +112,7 @@ def get_commissioning_key_status(device_id: str, _user=Depends(_require_admin), 
 
 @router.post("/devices/{device_id}/commissioning-key/disable")
 def disable_commissioning_key(device_id: str, user=Depends(_require_admin), db: Session = Depends(get_db)):
+    _ensure_device_access(db, user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device ikke fundet")

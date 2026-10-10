@@ -42,23 +42,40 @@ from sqlalchemy.orm import Session
 from database import Camera, Customer, Device, Site, User
 
 
+# ── Role model (Peter, 2026-10-10) ─────────────────────────────────────────
+# super_admin: global access to every customer.
+# admin / operator / viewer: their role applies to every customer they are
+# attached to (users ↔ customers is many-to-many, table user_customers).
+# A non-super_admin user with no customer gets no customer data — there is
+# no implicit global access for any other role.
+
 def _is_platform_admin(user: User | None) -> bool:
-    """Return True for users allowed to see all tenants."""
-    if user is None:
-        return False
-    return user.role == "super_admin" or (user.role == "admin" and not user.customer_id)
+    """True only for super_admin — the one role with implicit global access."""
+    return user is not None and getattr(user, "role", None) == "super_admin"
 
 
-def _allowed_customer_ids(db: Session, user: User | None) -> set[str] | None:
-    """Customers the user may act for; None = all (super_admin only).
+def user_customer_ids(user: User | None) -> set[str]:
+    """The customers a user is attached to (memberships + legacy mirror).
 
-    Unlike _is_platform_admin above there is no implicit global access for an
-    admin without a customer: no customer means no customer data."""
+    `users.customer_id` is kept as a mirror of a sole membership (see
+    database.User); reading it too keeps rollback and not-yet-backfilled rows
+    working. It can only ever add that one customer, never global access."""
     if user is None:
         return set()
-    if user.role == "super_admin":
+    found = {str(link.customer_id) for link in (getattr(user, "customer_links", None) or []) if link.customer_id}
+    legacy = getattr(user, "customer_id", None)
+    if legacy:
+        found.add(str(legacy))
+    return found
+
+
+def _allowed_customer_ids(db: Session | None, user: User | None) -> set[str] | None:
+    """Customers the user may act for; None = all (super_admin only)."""
+    if user is None:
+        return set()
+    if _is_platform_admin(user):
         return None
-    return {str(user.customer_id)} if getattr(user, "customer_id", None) else set()
+    return user_customer_ids(user)
 
 
 FIELD_ROLES = ("none", "installer", "technician")
@@ -75,9 +92,10 @@ def _has_field_access(user: "User | None") -> bool:
 
 def _ensure_customer_access(user: User | None, customer_id: str | None) -> None:
     """Enforce tenant boundary for customer scoped records."""
-    if _is_platform_admin(user):
+    allowed = _allowed_customer_ids(None, user)
+    if allowed is None:
         return
-    if not user or not user.customer_id or customer_id != user.customer_id:
+    if not customer_id or str(customer_id) not in allowed:
         raise HTTPException(status_code=403, detail="Ingen adgang til denne kunde")
 
 
@@ -91,38 +109,53 @@ def _ensure_site_access(db: Session, user: User | None, site_id: str | None) -> 
 
 def _visible_customer_query(db: Session, user: User | None):
     q = db.query(Customer)
-    if _is_platform_admin(user):
+    allowed = _allowed_customer_ids(db, user)
+    if allowed is None:
         return q
-    if not user or not user.customer_id:
-        return q.filter(Customer.id == "__none__")
-    return q.filter(Customer.id == user.customer_id)
+    return q.filter(Customer.id.in_(sorted(allowed) or ["__none__"]))
 
 
 def _visible_site_query(db: Session, user: User | None):
     q = db.query(Site)
-    if _is_platform_admin(user):
+    allowed = _allowed_customer_ids(db, user)
+    if allowed is None:
         return q
-    if not user or not user.customer_id:
-        return q.filter(Site.id == "__none__")
-    return q.filter(Site.customer_id == user.customer_id)
+    return q.filter(Site.customer_id.in_(sorted(allowed) or ["__none__"]))
 
 
 def _visible_device_query(db: Session, user: User | None):
     q = db.query(Device)
-    if _is_platform_admin(user):
+    allowed = _allowed_customer_ids(db, user)
+    if allowed is None:
         return q
-    if not user or not user.customer_id:
+    if not allowed:
         return q.filter(Device.device_id == "__none__")
-    site_ids = db.query(Site.id).filter(Site.customer_id == user.customer_id)
-    return q.filter(or_(Device.customer_id == user.customer_id, Device.site_id.in_(site_ids)))
+    customers = sorted(allowed)
+    site_ids = db.query(Site.id).filter(Site.customer_id.in_(customers))
+    return q.filter(or_(Device.customer_id.in_(customers), Device.site_id.in_(site_ids)))
 
 
 def _visible_camera_query(db: Session, user: "User | None"):
     """Samme tenant-afgrænsning som _visible_device_query, for Camera."""
     q = db.query(Camera).filter(Camera.retired_at.is_(None))
-    if _is_platform_admin(user):
+    allowed = _allowed_customer_ids(db, user)
+    if allowed is None:
         return q
-    if not user or not user.customer_id:
+    if not allowed:
         return q.filter(Camera.id == "__none__")
-    site_ids = db.query(Site.id).filter(Site.customer_id == user.customer_id)
-    return q.filter(or_(Camera.customer_id == user.customer_id, Camera.site_id.in_(site_ids)))
+    customers = sorted(allowed)
+    site_ids = db.query(Site.id).filter(Site.customer_id.in_(customers))
+    return q.filter(or_(Camera.customer_id.in_(customers), Camera.site_id.in_(site_ids)))
+
+
+def _visible_device_ids(db: Session, user: User | None) -> set[str] | None:
+    """device_ids the user may see; None = all (super_admin)."""
+    if _allowed_customer_ids(db, user) is None:
+        return None
+    return {row[0] for row in _visible_device_query(db, user).with_entities(Device.device_id).all()}
+
+
+def _ensure_device_access(db: Session, user: User | None, device_id: str | None) -> None:
+    allowed = _visible_device_ids(db, user)
+    if allowed is not None and device_id not in allowed:
+        raise HTTPException(status_code=403, detail="Ingen adgang til denne enhed")

@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-10-10 — fra Claude til Peter/næste session: PR B — central autorisationsmodel med mange-til-mange kunder
+
+- **Peter:** "En bruger skal kunne være tilknyttet flere kunder, uanset rolle … Kun `super_admin` må få implicit global adgang." Rollen er global pr. bruger; kundetilknytninger er mange-til-mange.
+- **Fundet før ændring (kode):** ingen mange-til-mange- eller kundespecifik rollestruktur fandtes (kun `users.customer_id`, kommenteret "null = adgang til alle kunder"). Brugeroprettelse/-redigering krævede ingen kunde og kunne ikke rydde kunden. "Admin uden kunde = global" fandtes centralt (`_is_platform_admin`) og lokalt (`redaction_api.py`, `ai/integration.py`, `trust_service_api.py`, `technician_keys.py`). Kundespecifikke roller indføres ikke.
+- **Ændring:** tabel `user_customers` (+ `headend/migrations/v40_user_customers.sql`, idempotent backfill ved opstart), `services/user_customers.py` (eneste skrivevej; `users.customer_id` bevares som spejl af en eneste tilknytning ellers NULL). `tenant_scope`: `_is_platform_admin` = kun super_admin; alle helpers bygger på kundemængden (`user_customer_ids`/`_allowed_customer_ids`). Lokale implementeringer bragt på linje: redaction, AI-platformadmin, billedadgangslog, kunderisiko, kamera-feltadgang, trust-grant-binding (Edge-ejer + kundemængde), trust-policy (principal med kundemængde), SSH-nøgleadministration (admin kun for brugere helt inden for egne kunder; aldrig super_admin), SSH-nøglereplikering (følger modellen), commissioning-nøgle (manglede enhedstjek), MFA (strengeste tilknyttede kunde). Brugerstyring i UI: flervalg af kunder.
+- **Bevidst uændret:** tekniker-/recovery-grant og browserterminal-grant (allerede beskyttet af central enhedskontrol) — ingen SSH-/TOTP-/recovery-/rollback-funktion er fjernet.
+- **Tests:** `headend/tests/test_multi_customer_authorization.py` (31): 0/1/2/flere kunder × alle roller, ophævelse, rolleskift, manipulerede customer_id/device_id, backfill uden genopstandelse, API, MFA, trust, SSH-nøgler, redaction. Seks eksisterende tests kodede den gamle "global uden kunde"-semantik → opdateret. Mutationstjek: gamle undtagelse tilbage ⇒ 8 fejl. Fuld suite 1788 passed; UI build + lint-gate OK.
+- **Migrations-/rollbackplan:** `Dokumentation/MIGRATION_PLAN_USER_CUSTOMERS_v40.md`. Prod-forhåndstjek kørt read-only (resultater givet Peter direkte, ikke i repo). NB rollback: gammel kode opfatter admin med NULL kunde som global — flerkunde-brugere skal håndteres før rollback.
+- **Status:** merged? NEJ. Deployet? NEJ. Stakket på PR A. Afventer uafhængig review.
+
 ### Handover 2026-10-10 — fra Claude til Peter/næste session: PR A — opdateringsbeslutninger er kunde-afgrænsede
 
 - **Peter:** "En admin må kun godkende opdateringer for de kunder, vedkommende er autoriseret til … For opdateringer med targets fra flere kunder skal ALLE berørte targets autoriseres … `super_admin` kan godkende på tværs af alle kunder."

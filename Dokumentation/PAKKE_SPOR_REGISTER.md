@@ -18,6 +18,13 @@ liste for overlap; efter merge, ret listen til.
 
 ## Åbne spor — fulde felter (§14.6)
 
+### PR B mange-til-mange kunder — `claude/security-multi-customer-authz-20261010`
+
+- **Mandat/session:** Claude, Peter 2026-10-10 ("PR B – Central autorisationsmodel med many-to-many kunder").
+- **Scope:** `user_customers`, central kundemængde i `tenant_scope`, lokale implementeringer bragt på linje, UI-flervalg, v40-migration. Stakket på PR A.
+- **Overlap:** #297 (tenant-helpers forudsætter én kunde) rebases oven på denne; se HANDOVER for rækkefølge.
+- **Næste handling:** uafhængig review; prod-forhåndstjek før deploy; ingen merge før review.
+
 ### PR A opdaterings-autorisation — `claude/security-update-approval-tenant-20261010`
 
 - **Mandat/session:** Claude, Peter 2026-10-10 ("PR A – P0: Update approval tenant-isolation").

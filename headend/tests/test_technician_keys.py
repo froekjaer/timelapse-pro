@@ -38,15 +38,18 @@ def test_validate_public_key_accepts_known_prefixes_rejects_others():
             pass
 
 
-def test_resolve_authorized_technician_keys_includes_global_and_matching_customer():
+def test_resolve_authorized_technician_keys_includes_super_admin_and_matching_customer():
+    # Central role model (2026-10-10): only super_admin is global; a
+    # non-super_admin field user without customers reaches no Edge.
     device = SimpleNamespace(customer_id="cust-A")
-    global_tech = _fake_user(id=1, username="global-tech", customer_id=None, field_role="technician")
+    global_tech = _fake_user(id=1, username="global-tech", role="super_admin", customer_id=None, field_role="technician")
+    no_customer_tech = _fake_user(id=4, username="no-customer-tech", customer_id=None, field_role="technician")
     matching_tech = _fake_user(id=2, username="cust-a-tech", customer_id="cust-A", field_role="installer")
     other_customer_tech = _fake_user(id=3, username="cust-b-tech", customer_id="cust-B", field_role="technician")
 
     db = MagicMock()
     user_q = MagicMock()
-    user_q.filter.return_value.filter.return_value.all.return_value = [global_tech, matching_tech, other_customer_tech]
+    user_q.filter.return_value.filter.return_value.all.return_value = [global_tech, matching_tech, other_customer_tech, no_customer_tech]
 
     def query_dispatch(model):
         if model is technician_keys.User:
@@ -57,7 +60,7 @@ def test_resolve_authorized_technician_keys_includes_global_and_matching_custome
             def filter_by(**kw):
                 fq = MagicMock()
                 uid = kw["user_id"]
-                keys = [SimpleNamespace(public_key=f"ssh-ed25519 KEY-{uid}", label="laptop", id=99)] if uid in (1, 2) else []
+                keys = [SimpleNamespace(public_key=f"ssh-ed25519 KEY-{uid}", label="laptop", id=99)] if uid in (1, 2, 4) else []
                 fq.filter.return_value.all.return_value = keys
                 return fq
             key_q.filter_by.side_effect = filter_by
@@ -72,6 +75,7 @@ def test_resolve_authorized_technician_keys_includes_global_and_matching_custome
     assert "global-tech:laptop" in identities
     assert "cust-a-tech:laptop" in identities
     assert not any("cust-b-tech" in i for i in identities)
+    assert not any("no-customer-tech" in i for i in identities)
     assert len(entries) == 2
 
 

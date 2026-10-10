@@ -34,8 +34,9 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import get_db, User, UserSSHKey
+from database import get_db, Site, User, UserSSHKey
 from auth import get_current_user
+from tenant_scope import _allowed_customer_ids, user_customer_ids
 
 log = logging.getLogger(__name__)
 
@@ -142,9 +143,25 @@ async def _require_self_or_admin(user_id: int, request: Request, db: Session = D
     current_user = get_current_user(request, db)
     if current_user is None:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")
-    if current_user.id != user_id and current_user.role not in ("super_admin", "admin"):
+    if current_user.id != user_id and not _may_manage_user_keys(db, current_user, user_id):
         raise HTTPException(status_code=403, detail="Kan kun administrere egne SSH-nøgler")
     return current_user
+
+
+def _may_manage_user_keys(db: Session, actor, user_id: int) -> bool:
+    """super_admin: anyone. admin: only users who are wholly inside the
+    admin's own customers (never a super_admin, never a user without
+    customers) — these keys are replicated to Edges."""
+    if getattr(actor, "role", None) == "super_admin":
+        return True
+    if getattr(actor, "role", None) != "admin":
+        return False
+    target = db.query(User).filter_by(id=user_id).first()
+    if target is None or target.role == "super_admin":
+        return False
+    allowed = _allowed_customer_ids(db, actor) or set()
+    target_customers = user_customer_ids(target)
+    return bool(target_customers) and target_customers <= allowed
 
 
 class SSHKeyCreateRequest(BaseModel):
@@ -213,16 +230,23 @@ def add_user_ssh_key(
 def resolve_authorized_technician_keys(db: Session, device) -> list[dict]:
     """Every currently-valid public key for a field-role user (installer or
     technician) with access to this device's customer, for inclusion in the
-    consolidated sync-poll response (headend/edge_sync.py). Global field-role
-    users (no customer_id — platform-wide field staff) are included for every
-    device; customer-scoped users only for devices under that same customer.
+    consolidated sync-poll response (headend/edge_sync.py). Central role model
+    (tenant_scope, 2026-10-10): super_admin field staff are included for every
+    device; everyone else only for devices of a customer they are attached to
+    (device or site customer). A non-super_admin user without customers gets
+    no Edge — previously such a user counted as platform-wide field staff.
 
     Returns audit-labelled entries, not per-user Linux accounts — the edge
     side authenticates all of these against a single shared functional
     account (see Dokumentation/HANDOVER_LOG.md 2026-08-19 for why: only the
     break-glass account is meant to be a real local Linux account).
     """
-    device_customer_id = getattr(device, "customer_id", None)
+    device_customers = {str(c) for c in (getattr(device, "customer_id", None),) if c}
+    site_id = getattr(device, "site_id", None)
+    if site_id:
+        site = db.query(Site).filter_by(id=site_id).first()
+        if site and site.customer_id:
+            device_customers.add(str(site.customer_id))
     users = (
         db.query(User)
         .filter(User.field_role.in_(("installer", "technician")))
@@ -231,7 +255,10 @@ def resolve_authorized_technician_keys(db: Session, device) -> list[dict]:
     )
     entries: list[dict] = []
     for user in users:
-        if user.customer_id and device_customer_id and str(user.customer_id) != str(device_customer_id):
+        # Central role model: super_admin everywhere; anyone else only on
+        # devices of a customer they are attached to (none → no Edge).
+        allowed = _allowed_customer_ids(db, user)
+        if allowed is not None and not (allowed & device_customers):
             continue
         keys = (
             db.query(UserSSHKey)

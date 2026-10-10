@@ -14,6 +14,11 @@ class Principal:
     tenant_id: str | None = None
     capabilities: frozenset[str] = field(default_factory=frozenset)
     mfa_verified: bool = False
+    # Many-to-many customers (2026-10-10). None = not supplied (legacy
+    # principal: only tenant_id is compared, as before). global_access is
+    # set for super_admin only.
+    tenant_ids: frozenset[str] | None = None
+    global_access: bool = False
 
 
 @dataclass(frozen=True)
