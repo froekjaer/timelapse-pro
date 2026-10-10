@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-10-10 11:00 — fra Claude til Peter/næste session: LAB ventede stadig længe trods 2 s wake → agenten sov resten af sit interval
+
+- **Peter:** "LAB står stadig og venter LÆNGE".
+- **Edge1-log 10:15:** wake 10:15:45 → sync 10:15:50 → "Lab mode aktiveret via config-ændring" 10:15:51 → **"Sleeping 64s until next capture…"**: hovedløkken var i en normal `_tick`, og efter sync'en sov den resten af intervallet, før LAB-løkken startede. Wake var altså ikke flaskehalsen. Desuden: Peter slog LAB fra 10:16:36 → wake 10:16:38 → løkken havde valgt LAB ud fra den *forrige* config, `_lab_tick` hentede config (nu slået fra) men **tændte alligevel kamera-relæet** (10:16:41 "preparing camera", 10 s warm-up).
+- **Rettet (ny PR):** `_apply_config_changes` sætter `_wake_event` når LAB aktiveres ⇒ tick'ets søvn afbrydes og LAB starter straks. `_lab_tick` returnerer efter sit config-pull hvis `debug_mode.enabled is False` (eksplicit — `set_debug_mode` skriver altid False) og kameraet ikke allerede er tændt ⇒ intet kamera for en afsluttet session. Tilbage i LAB-start er kun kameraets egen opstart (relæ + warm-up ~10 s + gphoto-forbindelse).
+- **Test:** `tests/test_lab_mode_starts_immediately.py` (2); eksisterende `test_lab_tick_state_machine.py` grønne; CI-ækvivalent 1712 passed. Edge-ændring → lab.64.
+
 ### Handover 2026-10-10 10:40 — fra Claude til Peter/næste session: lab.63 (wake gennem SSH-tunnel) verificeret live på begge Edges; dobbelt watcher rettet
 
 - **lab.62 Edge2 (#330, 09:40:30):** deployed uden rollback (lab.59→lab.62 direkte). Nye units active, ny unik BT-adresse `02:09:0A:C7:A8:79`, baseline journald+ramlog changed, `ExecStartPre=+…`. Capture 09:50 på NPU'en: `snow_or_dirt_on_lens` 0.81 (shadow), CPU-dom stod (`passed True`, blur 1126). Begge Edges = lab.62 fil-for-fil (130 filer) før lab.63.
