@@ -18,6 +18,13 @@ liste for overlap; efter merge, ret listen til.
 
 ## Åbne spor — fulde felter (§14.6)
 
+### P0 tenant-afgrænsning — `claude/security-tenant-isolation-p0-20261010`
+
+- **Mandat/session:** Claude, Peters opgave "Security Remediation P0" 2026-10-10.
+- **Formål/scope:** tenant-autorisation på Edge-diagnostik, backup/resilience og beslægtede device-endpoints. Base `main@650f954f`.
+- **Overlap/restdisposition:** åbne PR'er #159/#163/#246/#253/#258/#259 rører også `headend/main.py`, men ikke de samme funktioner (enkeltlinje-tilføjelser i fire endpoints). Ingen overlap med Golden Edge-sporet (#257).
+- **Næste handling:** uafhængig review; ingen merge før da.
+
 Disse spor ændrer kode, sikkerhed eller den fælles governance-tekst og er derfor
 **fulde spor** efter §14.6 — ikke lette spor. #229 er lukket 2026-09-13 (se nederst
 i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet frisk

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from auth import require_role
+from tenant_scope import _ensure_device_access, _visible_device_ids, _visible_device_query
 from database import Device, EdgeApiCommunicationLog, EdgeCommunicationCaptureSession, SessionLocal, get_db
 
 router = APIRouter(prefix="/api/admin/edge-communications", tags=["Edge Communications"])
@@ -296,13 +297,38 @@ def _row_dict(row: EdgeApiCommunicationLog) -> dict[str, Any]:
     }
 
 
+def _scoped_log_query(db: Session, user, device_id: str | None, transport_security: str | None):
+    """Log rows the user may see/export/delete. A customer-bound admin only
+    gets rows for devices in their tenant; with device_id it must be theirs."""
+    q = db.query(EdgeApiCommunicationLog)
+    if device_id:
+        _ensure_device_access(db, user, device_id)
+        q = q.filter(EdgeApiCommunicationLog.device_id == device_id)
+    else:
+        allowed = _visible_device_ids(db, user)
+        if allowed is not None:
+            q = q.filter(EdgeApiCommunicationLog.device_id.in_(sorted(allowed) or ["__none__"]))
+    if transport_security:
+        q = q.filter(EdgeApiCommunicationLog.transport_security == transport_security)
+    return q
+
+
+def _ensure_session_access(db: Session, user, session: EdgeCommunicationCaptureSession) -> None:
+    """A device-bound session belongs to that device's tenant; a global
+    session (no device_id) captures every device and is platform-only."""
+    if session.device_id:
+        _ensure_device_access(db, user, session.device_id)
+    elif _visible_device_ids(db, user) is not None:
+        raise HTTPException(status_code=403, detail="Kun platform-administratorer kan styre en global capture-session")
+
+
 @router.get("/devices")
 def list_devices(_user=require_role("admin"), db: Session = Depends(get_db)):
-    rows = db.query(Device).order_by(Device.device_id).all()
+    rows = _visible_device_query(db, _user).order_by(Device.device_id).all()
     return [
         {
             "device_id": row.device_id,
-            "label": row.camera_name or row.location_name or row.hostname or row.device_id,
+            "label": row.camera_name or row.location_name or row.device_id,
             "customer_name": row.customer_name,
             "site_name": row.site_name,
             "last_seen": row.last_seen.isoformat() if row.last_seen else None,
@@ -327,6 +353,9 @@ def capture_status(_user=require_role("admin"), db: Session = Depends(get_db)):
             changed = True
     if changed:
         db.commit()
+    allowed = _visible_device_ids(db, _user)
+    if allowed is not None:   # customer-bound admin: own devices' sessions only
+        sessions = [s for s in sessions if s.device_id and s.device_id in allowed]
     return [_capture_session_dict(s) for s in sessions]
 
 
@@ -347,6 +376,11 @@ def start_capture(
         raise HTTPException(status_code=400, detail="Varighed skal være positiv")
     if max_packets is not None and max_packets <= 0:
         raise HTTPException(status_code=400, detail="Maks. antal pakker skal være positivt")
+    if device_id:
+        _ensure_device_access(db, _user, device_id)
+    elif _visible_device_ids(db, _user) is not None:
+        raise HTTPException(status_code=403, detail="Angiv en enhed — en global capture-session kræver platform-administrator")
+    platform = _visible_device_ids(db, _user) is None
 
     now = datetime.now(timezone.utc)
     existing = (
@@ -358,9 +392,11 @@ def start_capture(
         if _expire_if_due(session, now):
             continue
         if not session.device_id or not device_id or session.device_id == device_id:
+            # Do not reveal another tenant's session id to a customer-bound admin.
             raise HTTPException(
                 status_code=409,
-                detail=f"En capture-session kører allerede (id={session.id}) — stop den først",
+                detail=(f"En capture-session kører allerede (id={session.id}) — stop den først" if platform
+                        else "En capture-session kører allerede for denne enhed — prøv igen senere"),
             )
     db.commit()
 
@@ -381,6 +417,7 @@ def stop_capture(session_id: int, _user=require_role("admin"), db: Session = Dep
     session = db.query(EdgeCommunicationCaptureSession).filter_by(id=session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Capture-session ikke fundet")
+    _ensure_session_access(db, _user, session)
     if session.stopped_at is None:
         session.stopped_at = datetime.now(timezone.utc)
         session.stop_reason = "manual"
@@ -397,11 +434,7 @@ def list_communications(
     _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
-    q = db.query(EdgeApiCommunicationLog)
-    if device_id:
-        q = q.filter(EdgeApiCommunicationLog.device_id == device_id)
-    if transport_security:
-        q = q.filter(EdgeApiCommunicationLog.transport_security == transport_security)
+    q = _scoped_log_query(db, _user, device_id, transport_security)
     rows = q.order_by(EdgeApiCommunicationLog.created_at.desc()).limit(max(1, min(limit, 1000))).all()
     return [_row_dict(row) for row in rows]
 
@@ -414,14 +447,11 @@ def clear_communications(
     db: Session = Depends(get_db),
 ):
     """Ryd den loggede pakkeliste, så man kan starte forfra. Respekterer
-    samme filtre som listevisningen — uden filtre ryddes alt. Rydder ikke
+    samme filtre som listevisningen — uden filtre ryddes alt, dog kun inden
+    for de enheder brugeren har adgang til (tenant-afgrænset). Rydder ikke
     capture-sessioner (de styrer om der logges noget nyt, ikke hvad der
     allerede er logget)."""
-    q = db.query(EdgeApiCommunicationLog)
-    if device_id:
-        q = q.filter(EdgeApiCommunicationLog.device_id == device_id)
-    if transport_security:
-        q = q.filter(EdgeApiCommunicationLog.transport_security == transport_security)
+    q = _scoped_log_query(db, _user, device_id, transport_security)
     deleted = q.delete(synchronize_session=False)
     db.commit()
     return {"deleted": deleted}
@@ -507,10 +537,6 @@ def export_communications(
     _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
-    q = db.query(EdgeApiCommunicationLog)
-    if device_id:
-        q = q.filter(EdgeApiCommunicationLog.device_id == device_id)
-    if transport_security:
-        q = q.filter(EdgeApiCommunicationLog.transport_security == transport_security)
+    q = _scoped_log_query(db, _user, device_id, transport_security)
     rows = q.order_by(EdgeApiCommunicationLog.created_at.desc()).limit(max(1, min(limit, 5000))).all()
     return _xlsx_response([_row_dict(row) for row in rows])

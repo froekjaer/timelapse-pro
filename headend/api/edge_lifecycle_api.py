@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import Device, KeyCredential, get_db, now_utc
+from tenant_scope import _ensure_device_access, _ensure_platform_admin
 from services.edge_lifecycle import (
     LifecycleTransitionError,
     get_or_create_lifecycle_record,
@@ -45,6 +46,8 @@ def create_edge_lifecycle_router(
         current_user=require_role("super_admin", "admin"),
         db: Session = Depends(get_db),
     ):
+        # Reconciles every device's lifecycle state — platform-wide action.
+        _ensure_platform_admin(current_user)
         summary = reconcile_all_devices(db, actor=current_user.username)
         db.commit()
         return {
@@ -61,6 +64,7 @@ def create_edge_lifecycle_router(
         db: Session = Depends(get_db),
     ):
         device_id = sanitize_device_id(device_id)
+        _ensure_device_access(db, current_user, device_id)
         device = db.query(Device).filter_by(device_id=device_id).first()
         if not device:
             raise HTTPException(status_code=404, detail="Edge ikke fundet")

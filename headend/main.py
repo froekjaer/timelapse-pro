@@ -108,7 +108,7 @@ from dict_merge import _deep_merge
 from tenant_scope import (
     _is_platform_admin, FIELD_ROLES, _has_field_access,
     _ensure_customer_access, _ensure_site_access,
-    _visible_customer_query, _visible_site_query, _visible_device_query,
+    _visible_customer_query, _visible_site_query, _visible_device_query, _ensure_platform_admin,
 )
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
@@ -4812,6 +4812,7 @@ def ssh_tunnel_log(
     db: Session = Depends(get_db)
 ):
     """Audit log for SSH tunnel sessioner på en device."""
+    _ensure_capture_device_access(db, _user, device_id)
     from database import SshTunnelLog
     entries = (
         db.query(SshTunnelLog)
@@ -14246,7 +14247,8 @@ def _latest_headend_backup_file(nas_path: str | None) -> str | None:
 
 @app.get("/api/admin/resilience/assessment")
 def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get_db)):
-    """Backup, restore, provisioning and compliance readiness snapshot."""
+    """Backup, restore, provisioning and compliance readiness snapshot (platform-wide: all devices, NAS, tokens)."""
+    _ensure_platform_admin(_user)
     devices = db.query(Device).order_by(Device.device_id).all()
     inventory = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
     device_ids = {d.device_id for d in devices}
@@ -14483,6 +14485,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
 @app.post("/api/admin/backup/trigger-edge/{device_id}")
 def trigger_edge_backup(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Anmod edge enhed om at lave backup."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -14799,6 +14802,7 @@ def build_edge_bootstrap_image(
 @app.post("/api/admin/backup/edge-complete/{device_id}")
 def edge_backup_complete(device_id: str, payload: dict, _user=require_role("operator"), db: Session = Depends(get_db)):
     """Edge rapporterer at backup er komplet — flyt til backup mappe lokalt på Pi 5."""
+    _ensure_capture_device_access(db, _user, device_id)
     import os as _os
     import shutil as _sh
     device = db.query(Device).filter_by(device_id=device_id).first()

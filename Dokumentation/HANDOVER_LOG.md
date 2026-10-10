@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-10-10 — fra Claude til Peter/næste session: Security remediation P0 — tenant-afgrænsning (diagnostik, backup/resilience)
+
+- **Opgave (Peter):** ret to tenant-isolationsfund fra den uafhængige audit af `main@650f954f`; separat branch `claude/security-tenant-isolation-p0-20261010`, ingen produktionsændringer, ingen merge uden uafhængig review. Holdt adskilt fra Golden Edge-sporet; ingen SSH/TOTP/recovery/rollback-funktion er ændret eller fjernet.
+- **Rettet:** kundebundne administratorer er nu begrænset til egne Edges i Edge-kommunikationsdiagnostik (liste, eksport, sletning, capture-sessioner), backup-anmodning, backup-kvittering, SSH-tunnel-log og lifecycle-transition. Platform-dækkende visninger/handlinger (resilience-snapshot, lifecycle-reconcile, globale capture-sessioner) kræver platform-administrator. Genbruger `tenant_scope` (`_is_platform_admin`/`_visible_device_query`) og `main._ensure_capture_device_access` — ingen ny autorisationsmodel.
+- **Bonus-fejl fundet:** diagnostikkens enhedsliste læste et ikke-eksisterende felt (`Device.hostname`) og fejlede for enheder uden kamera-/lokationsnavn — rettet.
+- **Tests:** ny `headend/tests/test_tenant_isolation_p0.py` (22 tests: egen tenant tilladt, anden tenant 403, super_admin/platform-admin tilladt). To eksisterende testfixtures fik eksplicit `customer_id=None` (rigtige `User` har altid feltet). Fuld CI-ækvivalent suite: 1742 passed, 5 skipped; 4 kendte lokale gpg-fejl (`test_artifact_openpgp_verification`, kun miljø). Arkitektur-ratchet bestået (main.py 17546/17550 linjer).
+- **Ikke rettet — opfølgning kræver produktbeslutning:** fem fleet-dækkende admin-oversigter (nøgleadministration, aktive tunneler, opdaterings-device-matrix, GRC-dashboard, opdaterings-flow-status) er ikke tenant-filtrerede; de skal enten være platform-only eller filtreres pr. tenant — Peters valg.
+- **Status:** merged? NEJ. Deployet? NEJ. PR afventer uafhængig review.
+
 ### Handover 2026-10-10 11:45 — fra Claude til Peter/næste session: LAB-start viser rigtige trin (feedback) i stedet for gættet nedtælling
 
 - **Peter:** "kan du egentlig også lave, så der kommer nogle feedback step, når man har trykket start lab, så man kan se at der sker noget, og hvor langt den er".

@@ -114,3 +114,29 @@ def _visible_camera_query(db: Session, user: "User | None"):
         return q.filter(Camera.id == "__none__")
     site_ids = db.query(Site.id).filter(Site.customer_id == user.customer_id)
     return q.filter(or_(Camera.customer_id == user.customer_id, Camera.site_id.in_(site_ids)))
+
+
+def _visible_device_ids(db: Session, user: User | None) -> set[str] | None:
+    """Device ids this user may act on; None = platform admin (all devices).
+
+    Same tenant resolution as _visible_device_query (customer-owned devices
+    plus devices on the customer's sites), for routers that filter rows by
+    device_id rather than querying Device itself.
+    """
+    if _is_platform_admin(user):
+        return None
+    return {row[0] for row in _visible_device_query(db, user).with_entities(Device.device_id).all()}
+
+
+def _ensure_device_access(db: Session, user: User | None, device_id: str | None) -> None:
+    """403 unless the user may act on device_id. Equivalent to main's
+    _ensure_capture_device_access, importable from router modules."""
+    allowed = _visible_device_ids(db, user)
+    if allowed is not None and device_id not in allowed:
+        raise HTTPException(status_code=403, detail="Ingen adgang til denne enhed")
+
+
+def _ensure_platform_admin(user: User | None) -> None:
+    """403 unless the user may see all tenants (platform-wide views/actions)."""
+    if not _is_platform_admin(user):
+        raise HTTPException(status_code=403, detail="Kun platform-administratorer")
