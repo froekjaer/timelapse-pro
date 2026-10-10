@@ -38,7 +38,7 @@ def db_session():
 
 
 def _admin():
-    return SimpleNamespace(username="admin1", role="admin")
+    return SimpleNamespace(username="admin1", role="super_admin", customer_id=None)
 
 
 def test_start_requires_a_bound(db_session):

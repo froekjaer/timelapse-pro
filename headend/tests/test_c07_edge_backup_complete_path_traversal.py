@@ -49,7 +49,7 @@ def test_traversal_filename_is_neutralized_to_its_basename(db_session, _writable
     result = main.edge_backup_complete(
         DEVICE_ID,
         {"filename": "../../../../etc/passwd", "size_kb": 1},
-        _user=MagicMock(username="operator"),
+        _user=MagicMock(username="operator", role="super_admin", customer_id=None),
         db=db_session,
     )
     assert result["status"] == "ok"
@@ -64,7 +64,7 @@ def test_normal_filename_is_still_accepted(db_session, _writable_backup_dest):
     result = main.edge_backup_complete(
         DEVICE_ID,
         {"filename": "TL-TESTDEVICE-C07-backup-2026-08-20.tar.gz", "size_kb": 42},
-        _user=MagicMock(username="operator"),
+        _user=MagicMock(username="operator", role="super_admin", customer_id=None),
         db=db_session,
     )
     assert result["status"] == "ok"
@@ -79,7 +79,7 @@ def test_empty_filename_is_rejected(db_session, _writable_backup_dest):
         main.edge_backup_complete(
             DEVICE_ID,
             {"filename": "", "size_kb": 1},
-            _user=MagicMock(username="operator"),
+            _user=MagicMock(username="operator", role="super_admin", customer_id=None),
             db=db_session,
         )
     assert getattr(exc_info.value, "status_code", None) == 400

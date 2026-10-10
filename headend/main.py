@@ -108,8 +108,8 @@ from dict_merge import _deep_merge
 from tenant_scope import (
     _is_platform_admin, FIELD_ROLES, _has_field_access,
     _ensure_customer_access, _ensure_site_access,
-    _visible_customer_query, _visible_site_query, _visible_device_query,
-    _allowed_customer_ids, _visible_device_ids, user_customer_ids,
+    _visible_customer_query, _visible_site_query, _visible_device_query, _ensure_platform_admin,
+    _visible_only, _tenant_inventories, _allowed_customer_ids, _visible_device_ids, user_customer_ids,
 )
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
@@ -3025,7 +3025,7 @@ def _evidence_links_for_control(title: str, domains: list[str]) -> list[dict]:
 
 @app.get("/api/admin/key-management")
 def list_key_management(
-    _user=require_role("super_admin", "admin"),
+    _user=require_role("super_admin"),   # platform trust infrastructure, not tenant data
     db: Session = Depends(get_db),
 ):
     credentials = db.query(KeyCredential).order_by(KeyCredential.created_at.desc()).all()
@@ -3147,7 +3147,7 @@ def list_key_management(
 
 @app.post("/api/admin/key-management/migrate-legacy-device-tokens")
 def migrate_legacy_device_tokens(
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Migrer eksisterende devices.api_token til KeyCredential uden at ændre token.
@@ -3205,7 +3205,7 @@ def migrate_legacy_device_tokens(
 @app.post("/api/admin/key-management/credentials")
 def create_key_credential(
     payload: KeyCredentialPayload,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     entity_type = payload.entity_type.strip().lower()
@@ -3313,7 +3313,7 @@ def create_key_credential(
 def revoke_key_credential(
     credential_id: str,
     payload: KeyRevokePayload = KeyRevokePayload(),
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     credential = db.query(KeyCredential).filter_by(credential_id=credential_id).first()
@@ -3338,7 +3338,7 @@ def revoke_key_credential(
 def set_key_credential_request_signature_policy(
     credential_id: str,
     payload: KeySignaturePolicyPayload,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     credential = db.query(KeyCredential).filter_by(credential_id=credential_id).first()
@@ -3369,7 +3369,7 @@ def set_key_credential_request_signature_policy(
 @app.post("/api/admin/key-management/cleanup-stale-credentials")
 def cleanup_stale_key_credentials(
     payload: StaleCredentialCleanupPayload,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     older_than_days = max(int(payload.older_than_days or 30), 1)
@@ -4788,6 +4788,7 @@ def ssh_tunnel_active(
         ORDER BY s.event_at DESC
     """)).fetchall()
     rows = [r for r in rows if r[1] and _localhost_tcp_reachable(int(r[1]))]
+    rows = _visible_only(db, _user, rows, lambda r: r[0])
 
     device_ips = {d.device_id: d.ip_address for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()}
 
@@ -4821,6 +4822,7 @@ def ssh_tunnel_log(
     db: Session = Depends(get_db)
 ):
     """Audit log for SSH tunnel sessioner på en device."""
+    _ensure_capture_device_access(db, _user, device_id)
     from database import SshTunnelLog
     entries = (
         db.query(SshTunnelLog)
@@ -5736,7 +5738,7 @@ def list_update_device_matrix(
     db: Session = Depends(get_db)
 ):
     """CMDB-forankret opdateringsmatrix pr. enhed og update-kategori."""
-    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    inventories = _tenant_inventories(db, _user)
     device_map = {d.device_id: d for d in db.query(Device).all()}
     updates = db.query(PendingUpdate).order_by(PendingUpdate.created_at.desc()).all()
     category_meta = [
@@ -5835,7 +5837,7 @@ def grc_dashboard(
     db: Session = Depends(get_db),
 ):
     """Kvantitativ GRC-risk baseret på CMDB, missing updates, miljø og deployment-proces."""
-    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    inventories = _tenant_inventories(db, _user)
     device_map = {d.device_id: d for d in db.query(Device).all()}
     updates = db.query(PendingUpdate).order_by(PendingUpdate.created_at.desc()).all()
     device_rows: list[dict] = []
@@ -9717,6 +9719,7 @@ def get_update_flow_status(
     artifact = _find_artifact_for_update(db, update)
     ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
     devices = _resolve_update_targets(db, update)
+    devices = _visible_only(db, _user, devices, lambda d: d.device_id)
     target_rows = (
         db.query(UpdateTarget)
         .filter_by(pending_update_id=update.id)
@@ -14244,7 +14247,8 @@ def _latest_headend_backup_file(nas_path: str | None) -> str | None:
 
 @app.get("/api/admin/resilience/assessment")
 def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get_db)):
-    """Backup, restore, provisioning and compliance readiness snapshot."""
+    """Backup, restore, provisioning and compliance readiness snapshot (platform-wide: all devices, NAS, tokens)."""
+    _ensure_platform_admin(_user)
     devices = db.query(Device).order_by(Device.device_id).all()
     inventory = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
     device_ids = {d.device_id for d in devices}
@@ -14481,6 +14485,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
 @app.post("/api/admin/backup/trigger-edge/{device_id}")
 def trigger_edge_backup(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Anmod edge enhed om at lave backup."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -14797,6 +14802,7 @@ def build_edge_bootstrap_image(
 @app.post("/api/admin/backup/edge-complete/{device_id}")
 def edge_backup_complete(device_id: str, payload: dict, _user=require_role("operator"), db: Session = Depends(get_db)):
     """Edge rapporterer at backup er komplet — flyt til backup mappe lokalt på Pi 5."""
+    _ensure_capture_device_access(db, _user, device_id)
     import os as _os
     import shutil as _sh
     device = db.query(Device).filter_by(device_id=device_id).first()
@@ -16288,7 +16294,7 @@ def _call_ollama_text(prompt: str, model: str | None = None, db: Session | None 
 
 @app.get("/api/ai/ops/snapshot")
 def aiops_snapshot(
-    _user=require_role("super_admin", "admin"),
+    _user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     if not _is_platform_admin(_user):
@@ -16299,7 +16305,7 @@ def aiops_snapshot(
 @app.post("/api/ai/ops/analyze")
 def aiops_analyze(
     payload: dict | None = None,
-    _user=require_role("super_admin", "admin"),
+    _user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     if not _is_platform_admin(_user):
@@ -17255,7 +17261,7 @@ def _aiops_question_fallback(question: str, area: str, snapshot: dict) -> dict:
 @app.post("/api/ai/ops/query")
 def aiops_query(
     payload: dict,
-    _user=require_role("super_admin", "admin"),
+    _user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     if not _is_platform_admin(_user):
