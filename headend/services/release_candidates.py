@@ -59,3 +59,25 @@ def describe_candidates(candidates: list[dict]) -> str:
         f"{c['ref']} {c['device_id']}" + (f" ({c['device_name']})" if c["device_name"] else "") + f" {c['status']}"
         for c in candidates
     ) or "ingen"
+
+
+def is_newer_release(repo_dir: str, edge_commit: str, headend_commit: str, run=None) -> bool:
+    """True only if headend_commit strictly contains edge_commit (a real update).
+
+    An Edge on a NEWER release than the Headend checkout (e.g. Edge1 on lab.61
+    while the Headend still ran lab.60) must not be offered the older commit —
+    that was a downgrade proposed as "opdatering tilgængelig" (#329, 2026-10-05).
+    Unknown/diverged history also counts as "not newer".
+    """
+    import subprocess
+
+    run = run or subprocess.run
+    if not edge_commit or not headend_commit or headend_commit.startswith(edge_commit):
+        return False
+    result = run(["git", "-C", repo_dir, "merge-base", "--is-ancestor", edge_commit, headend_commit],
+                 capture_output=True, text=True, timeout=5)
+    if result.returncode != 0:
+        import logging
+        logging.getLogger("headend").info(
+            "Ignorerer app update hint: headend %s er ikke nyere end edge %s", headend_commit[:12], edge_commit[:12])
+    return result.returncode == 0

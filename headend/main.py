@@ -127,7 +127,7 @@ from services.update_supersession import device_already_at_update_version, super
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
-from services.release_candidates import latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
+from services.release_candidates import is_newer_release as _is_newer_release, latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
 from services import webauthn_autofill as _webauthn_autofill
 from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors, login_allow_credentials as _webauthn_login_allow_credentials
 from redaction_api import router as redaction_router
@@ -4083,7 +4083,7 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
         )
 
     edge_is_current = bool(edge_version and headend_version.startswith(edge_version))
-    if edge_version and headend_version and not edge_is_current:
+    if edge_version and headend_version and not edge_is_current and _is_newer_release(repo_dir, edge_version, headend_version):
         if not _has_signed_app_artifact(headend_version):
             log.info(
                 "Ignorerer app update hint for %s: headend commit %s har intet signeret Edge app-artifact",
