@@ -683,11 +683,11 @@ class EdgeAgent:
 
         def power_acquire(_platform, _session, _kwargs):
             if not getattr(self, "_lab_relay_on", False):
+                # relay.power_on() already waits relay_on_seconds_before when it
+                # actually switches on; waiting again here (and again in the LAB
+                # loop) made LAB take 3 × 10 s to start (2026-10-10).
                 self._camera_power_on("lab service operation")
                 self._lab_relay_on = True
-                warmup_s = self._camera_warmup_seconds()
-                if warmup_s:
-                    time.sleep(warmup_s)
             return {"ok": True, "camera_relay_on": True}
 
         def power_release(_platform, _session, _kwargs):
@@ -3769,20 +3769,14 @@ class EdgeAgent:
                         self._camera_power_off("camera connect failure", force=True)
                         time.sleep(5)  # Wait for full discharge
                         log.info("LAB MODE — Powering camera back on after cycle...")
-                        self._camera_power_on("lab mode retry")
-                        warmup_s = self._camera_warmup_seconds()
-                        if warmup_s:
-                            log.info("LAB MODE — Waiting %ds for camera warm-up after power cycle...", warmup_s)
-                            time.sleep(warmup_s)
+                        self._camera_power_on("lab mode retry")   # relay waits its own warm-up
 
                 try:
                     # Power on if not already on
                     if not self._lab_relay_on or attempt == 0:
+                        # No-op if already on; otherwise the relay waits its own warm-up.
                         self._camera_power_on("lab mode")
                         self._lab_relay_on = True
-                        warmup_s = self._camera_warmup_seconds()
-                        if warmup_s:
-                            time.sleep(warmup_s)
 
                     self._driver.connect()
                     commands = self._build_camera_commands()
