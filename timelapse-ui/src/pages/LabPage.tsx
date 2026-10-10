@@ -24,6 +24,7 @@ import {
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
 import { InfoTooltip } from '../components/InfoTooltip'
+import { LabStartProgress } from '../components/LabStartProgress'
 // // import { useWebRTC } from '../hooks/useWebRTC' // F-013B/C: Replaced with Frame Push
 
 function authFetch(url: string, opts?: RequestInit) {
@@ -430,6 +431,7 @@ export default function LabPage() {
   const [statusMsg, setStatusMsg]     = useState('')
   const [labConnecting, setLabConnecting] = useState(false)
   const [labConnectSecs, setLabConnectSecs] = useState(0)
+  const [labProgressSince, setLabProgressSince] = useState<string | null>(null)
   const [labReady, setLabReady]           = useState(false)
   const [labConnectingStart, setLabConnectingStart] = useState<number | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
@@ -634,24 +636,18 @@ export default function LabPage() {
       setLabConnecting(true)
       setLabConnectingStart(Date.now())
       setLabReady(false)
-      const warmupS     = 30   // relay 10s + connect + commands
-      const configPullS = 60   // edge waker hvert 60s
-
-      // Beregn sekunder til næste 60s wake (synkroniseret)
-      const nowS        = Math.floor(Date.now() / 1000)
-      const secsToPull  = configPullS - (nowS % configPullS)
-      const totalWait   = secsToPull + warmupS
-      setLabConnectSecs(totalWait)
-
-      // Nedtælling — viser realistisk ventetid
-      let remaining = totalWait
-      const countdown = setInterval(() => {
-        remaining -= 1
-        setLabConnectSecs(Math.max(0, remaining))
-      }, 1000)
+      // Real progress instead of a guessed countdown (2026-10-10): the
+      // Headend (tunnel wake) and the Edge report each step; use the
+      // server's clock as the start so browser clock skew does not matter.
+      setLabConnectSecs(0)
+      try {
+        const r = await authFetch(`${getApiUrl()}/api/edge/lab-progress/${pathSegment(deviceId)}`)
+        const t = r.ok ? (await r.json()).server_time : null
+        setLabProgressSince(t ?? new Date().toISOString())
+      } catch { setLabProgressSince(new Date().toISOString()) }
 
       try {
-        // Sæt debug mode — edge vil opdage det ved næste config pull (~60s)
+        // Sæt debug mode — Headend vækker Edgen gennem SSH-tunnelen
         await setDebugMode(deviceId, true, 5)
 
         // Poll headend for faktisk LAB CAMERA READY signal
@@ -665,7 +661,6 @@ export default function LabPage() {
             const { cameraReady } = readLabState(data)
             if (cameraReady) {
               clearInterval(check)
-              clearInterval(countdown)
               setLabActive(true)
               setLabConnecting(false)
               setLabConnectSecs(0)
@@ -686,7 +681,6 @@ export default function LabPage() {
         setLabConnecting(false)
         setLabConnectSecs(0)
         setLabConnectingStart(null)
-        clearInterval(countdown)
         setStatusMsg('Fejl ved aktivering af lab mode')
       }
     } else {
@@ -1117,12 +1111,7 @@ export default function LabPage() {
                 }`}>
                 {labConnecting ? (
                   <><RefreshCw className="w-4 h-4 animate-spin" />
-                  {labConnectSecs > 60
-                    ? `Venter ~${Math.floor(labConnectSecs/60)}m ${labConnectSecs%60}s`
-                    : labConnectSecs > 0
-                      ? `Venter ~${labConnectSecs}s`
-                      : 'Venter på enhed…'
-                  }</>
+                  Starter LAB…</>
                 ) : labActive ? (
                   <><PowerOff className="w-4 h-4" /> Stop lab</>
                 ) : (
@@ -1137,17 +1126,18 @@ export default function LabPage() {
       {/* Lab inactive notice */}
       {!labActive && (!labStateChecked || labConnecting) && (
         <div className="max-w-2xl mx-auto mt-12 text-center">
-          <RefreshCw className="w-12 h-12 text-purple-300 mx-auto mb-4 animate-spin" />
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">{labConnecting ? 'Venter på kamera' : 'Kontrollerer lab-status'}</h2>
-          <p className="text-gray-400">
-            {labConnecting
-              ? 'LAB mode venter på kamera. Brug "Force stop" knappen til at nulstille hvis det hænger.'
-              : 'Henter aktuel status fra headend.'}
-          </p>
-          {labConnecting && labConnectingStart && (
-            <p className="text-xs text-gray-400 mt-2">
-              Ventetid: {Math.floor((Date.now() - labConnectingStart) / 60000)} minutter
-            </p>
+          {labConnecting && labProgressSince ? (
+            <LabStartProgress deviceId={deviceId} since={labProgressSince} />
+          ) : (
+            <>
+              <RefreshCw className="w-12 h-12 text-purple-300 mx-auto mb-4 animate-spin" />
+              <h2 className="text-xl font-semibold text-gray-700 mb-2">{labConnecting ? 'Venter på kamera' : 'Kontrollerer lab-status'}</h2>
+              <p className="text-gray-400">
+                {labConnecting
+                  ? 'LAB mode venter på kamera. Brug "Force stop" knappen til at nulstille hvis det hænger.'
+                  : 'Henter aktuel status fra headend.'}
+              </p>
+            </>
           )}
           {labConnecting && (
             <button

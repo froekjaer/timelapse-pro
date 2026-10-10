@@ -160,6 +160,8 @@ class EdgeWakeWatcher:
         ok, detail = self._sender(port, fingerprint)
         if ok:
             log.info("Edge wake sendt til %s via tunnel-port %s", device_id, port)
+            from services import lab_progress
+            lab_progress.record(device_id, "woken", f"via SSH-tunnel (port {port})")
         else:
             log.warning("Edge wake til %s fejlede (Edgen henter ændringen ved næste poll): %s", device_id, detail)
 

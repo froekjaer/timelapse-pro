@@ -39,6 +39,7 @@ from database import get_db, Device, BreakGlassAccount, now_utc
 from cmdb import report_inventory as _cmdb_report_inventory, _decrypt as _bg_decrypt
 from siem import ingest_events as _siem_ingest_events
 from technician_keys import resolve_authorized_technician_keys
+from auth import get_current_user as _auth_get_current_user
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["Edge Sync"])
@@ -190,3 +191,39 @@ async def edge_sync(
         "commissioning_key_disabled": bool(device.commissioning_key_disabled) if device else False,
         "break_glass": break_glass_payload,
     }
+
+
+# ── LAB start progress (Peter 2026-10-10) ─────────────────────────────────────
+# The Edge reports each LAB start step; the LAB page polls them to show where
+# the start is instead of a guessed countdown. In memory only — see
+# services/lab_progress.py for why it must not touch device_config.
+
+class LabProgressReport(BaseModel):
+    phase: str
+    detail: str = ""
+    extra: dict | None = None
+
+
+@router.post("/lab-progress/{device_id}")
+async def edge_lab_progress(
+    device_id: str,
+    req: LabProgressReport,
+    _auth: None = Depends(_require_edge_sync_auth),
+):
+    from services import lab_progress
+
+    return lab_progress.record(device_id, req.phase, req.detail, req.extra)
+
+
+@router.get("/lab-progress/{device_id}")
+def ui_lab_progress(device_id: str, since: str | None = None,
+                    user=Depends(_auth_get_current_user), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    from main import _ensure_capture_device_access
+    from services import lab_progress
+
+    if user is None:
+        raise HTTPException(status_code=401)
+    _ensure_capture_device_access(db, user, device_id)   # tenant scope, like every device view
+    return {"server_time": now_utc().isoformat(), "events": lab_progress.events(device_id, since)}

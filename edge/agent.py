@@ -449,6 +449,19 @@ class EdgeAgent:
             log.debug("Wake-request fil ikke klar: %s", exc)
             return False
 
+    def _lab_progress(self, phase: str, detail: str = "", **extra) -> None:
+        """Report a LAB start step to the Headend for the LAB page (Peter
+        2026-10-10). Fire-and-forget in a thread: progress must never delay
+        or break the LAB start itself."""
+        payload = {"phase": phase, "detail": detail, "extra": extra or None}
+
+        def _send():
+            try:
+                self._api._post(f"/edge/lab-progress/{self._device_id}", payload)
+            except Exception:
+                pass
+        threading.Thread(target=_send, name="lab-progress", daemon=True).start()
+
     def _wake_allowed(self) -> bool:
         try:
             import wake_policy
@@ -1800,6 +1813,7 @@ class EdgeAgent:
             lab_now = debug_cfg.get("enabled", False)
             if lab_now:
                 log.info("Lab mode aktiveret via config-ændring")
+                self._lab_progress("received", "Edgen har modtaget LAB")
                 # Leave the normal tick's idle sleep now: LAB must start at
                 # once, not after the rest of a capture-interval sleep
                 # (seen 2026-10-10: wake in 2 s, then "Sleeping 64s").
@@ -3744,6 +3758,7 @@ class EdgeAgent:
         # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
             log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
+            self._lab_progress("camera_power", "Kameraet tændes", warmup_s=self._camera_warmup_seconds())
             lab_session = None
             if getattr(self, "_service_platform", None):
                 lab_session = self._service_platform.shared_or_lab_session("lab")
@@ -3762,10 +3777,12 @@ class EdgeAgent:
                 if attempt > 0:
                     if attempt == 1:
                         log.info("LAB MODE — Retry camera connection (attempt %d/%d)", attempt + 1, max_retries + 1)
+                        self._lab_progress("camera_retry", f"Prøver at forbinde igen (forsøg {attempt + 1}/{max_retries + 1})")
                         time.sleep(2)  # Brief pause before retry
                     elif attempt == 2:
                         # Second failure - powercycle camera
                         log.warning("LAB MODE — Camera connection failed twice, power cycling...")
+                        self._lab_progress("camera_retry", "Kameraet genstartes (strøm af/på)", warmup_s=self._camera_warmup_seconds())
                         self._camera_power_off("camera connect failure", force=True)
                         time.sleep(5)  # Wait for full discharge
                         log.info("LAB MODE — Powering camera back on after cycle...")
@@ -3778,11 +3795,14 @@ class EdgeAgent:
                         self._camera_power_on("lab mode")
                         self._lab_relay_on = True
 
+                    self._lab_progress("camera_connecting", "Forbinder til kameraet")
+
                     self._driver.connect()
                     commands = self._build_camera_commands()
                     if commands:
                         self._driver.apply_initial_commands(commands)
                     log.info("LAB MODE — camera connected and ready")
+                    self._lab_progress("ready", "Kameraet er klar")
                     # Signal til headend at kamera er klar
                     try:
                         _, resp = self._api._post("/lab/" + self._device_id + "/camera-ready", {"ready": True})
@@ -3805,6 +3825,7 @@ class EdgeAgent:
                     if attempt >= max_retries:
                         # All retries exhausted - critical failure
                         log.critical("LAB MODE — Camera connection failed after %d attempts (including power cycle). MANUAL INTERVENTION REQUIRED.", max_retries + 1)
+                        self._lab_progress("camera_failed", f"Kameraet svarer ikke efter {max_retries + 1} forsøg: {exc}"[:280])
                         log.critical("LAB MODE — Check: 1) Camera physically connected via USB, 2) Camera powered on, 3) gphoto2 --auto-detect works")
                         self._lab_relay_on = False  # Force re-init on next tick
                         break
@@ -3952,6 +3973,7 @@ class EdgeAgent:
                         "profile": profile,
                     })
                     log.info("LAB — sent %d params to headend", len(params))
+                    self._lab_progress("params", f"{len(params)} kameraparametre hentet")
                 except Exception as exc:
                     log.warning("LAB — get_params failed: %s", exc)
                 finally:
