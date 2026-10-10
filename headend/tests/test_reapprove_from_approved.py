@@ -27,7 +27,7 @@ DEVICE_ID = "TL-TESTDEVICE-REAPPROVE"
 
 
 class _FakeUser:
-    def __init__(self, username="admin", role="admin", customer_id=None):
+    def __init__(self, username="admin", role="super_admin", customer_id=None):
         self.username = username
         self.role = role
         self.customer_id = customer_id

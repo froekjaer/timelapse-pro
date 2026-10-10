@@ -18,6 +18,13 @@ liste for overlap; efter merge, ret listen til.
 
 ## Åbne spor — fulde felter (§14.6)
 
+### PR A opdaterings-autorisation — `claude/security-update-approval-tenant-20261010`
+
+- **Mandat/session:** Claude, Peter 2026-10-10 ("PR A – P0: Update approval tenant-isolation").
+- **Scope:** opdateringsbeslutninger kunde-afgrænset; release-engineering kun super_admin. Base `main@650f954f`.
+- **Overlap:** #297 og PR B rører `tenant_scope.py`/`main.py`; se integrationsrækkefølge i HANDOVER (A → B → #297 rebased).
+- **Næste handling:** uafhængig review; ingen merge før da.
+
 Disse spor ændrer kode, sikkerhed eller den fælles governance-tekst og er derfor
 **fulde spor** efter §14.6 — ikke lette spor. #229 er lukket 2026-09-13 (se nederst
 i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet frisk
