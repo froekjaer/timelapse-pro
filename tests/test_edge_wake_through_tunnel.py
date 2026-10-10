@@ -27,17 +27,42 @@ def _baseline():
     return mod
 
 
-def test_edge_accepts_the_key_only_through_the_tunnel_with_forced_command(tmp_path):
-    b = _baseline()
+def _wake_policy():
+    spec = importlib.util.spec_from_file_location("wake_policy_t", ROOT / "edge/wake_policy.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_edge_accepts_the_key_only_through_the_tunnel_with_forced_command_when_allowed(tmp_path):
+    wp = _wake_policy()
     pub = tmp_path / "wake.pub"
     pub.write_text("ssh-ed25519 AAAATEST comment ignored\n")
-    assert b.wake_account(tmp_path, apply=False, pubkey_path=pub)["status"] == "changed"
-    line = (tmp_path / b.WAKE_HOME / ".ssh/authorized_keys").read_text()
-    assert line == ('from="127.0.0.1,::1",restrict,command="/opt/timelapse/edge/scripts/timelapse_wake_request.sh" '
-                    'ssh-ed25519 AAAATEST timelapse-edge-wake\n')
-    assert oct((tmp_path / b.WAKE_HOME / ".ssh/authorized_keys").stat().st_mode & 0o777) == "0o600"
-    assert b.wake_account(tmp_path, apply=False, pubkey_path=pub)["status"] == "ok"
+    keys = tmp_path / "ssh" / "authorized_keys"
+    assert wp.apply({}, target=keys, pubkey=pub, chown=False) is None        # not provisioned → untouched
+    keys.parent.mkdir()
+    assert wp.apply({}, target=keys, pubkey=pub, chown=False) == "enabled"   # default: allowed
+    assert keys.read_text() == ('from="127.0.0.1,::1",restrict,command="/opt/timelapse/edge/scripts/timelapse_wake_request.sh" '
+                                'ssh-ed25519 AAAATEST timelapse-edge-wake\n')
+    assert oct(keys.stat().st_mode & 0o777) == "0o600"
+    assert wp.apply({}, target=keys, pubkey=pub, chown=False) is None        # idempotent
+    # system.headend_wake from the hierarchy — UI selects store "false" strings too.
+    for off in ({"system": {"headend_wake": False}}, {"system": {"headend_wake": "false"}}):
+        assert wp.apply(off, target=keys, pubkey=pub, chown=False) in ("disabled", None)
+        assert keys.read_text() == ""                                         # sshd now refuses the key
+    assert wp.apply({"system": {"headend_wake": True}}, target=keys, pubkey=pub, chown=False) == "enabled"
+
+
+def test_baseline_creates_the_account_but_leaves_the_key_to_the_agent(tmp_path):
+    b = _baseline()
+    assert b.wake_account(tmp_path, apply=False)["status"] == "changed"
+    ssh_dir = tmp_path / b.WAKE_HOME / ".ssh"
+    assert ssh_dir.is_dir() and oct(ssh_dir.stat().st_mode & 0o777) == "0o700"
+    assert not (ssh_dir / "authorized_keys").exists()
+    assert b.wake_account(tmp_path, apply=False)["status"] == "ok"
     assert ("wake", b.wake_account) in b.STEPS
+    unit = (ROOT / "edge/scripts/timelapse-edge.service").read_text()
+    assert "ReadWritePaths=-/var/lib/tlwake/.ssh" in unit
 
 
 def test_shipped_public_key_and_forced_command():
@@ -100,6 +125,8 @@ def test_watcher_wakes_only_the_changed_connected_device(monkeypatch):
     tokens = {"TL-A": "a1", "TL-B": "b1"}
     monkeypatch.setattr(ew, "_tunnel_targets", lambda db: {"TL-A": (2201, "fpA"), "TL-B": (2204, "fpB")})
     monkeypatch.setattr(ew, "wake_token", lambda db, d: tokens[d])
+    allowed = {"TL-A": True, "TL-B": True}
+    monkeypatch.setattr(ew, "_effective_config", lambda db, d: {"system": {"headend_wake": allowed[d]}})
     sent = []
     done = threading.Event()
 
@@ -115,11 +142,56 @@ def test_watcher_wakes_only_the_changed_connected_device(monkeypatch):
     done.wait(2)
     assert sent == [(2204, "fpB")]
     assert w.check_once() == []
+    allowed["TL-A"] = False                         # system.headend_wake=false for TL-A
+    tokens["TL-A"] = "a2"
+    assert w.check_once() == []
+
+
+def test_hierarchy_wiring_global_device_customer_site_camera():
+    main = (ROOT / "headend/main.py").read_text(encoding="utf-8")
+    assert '"headend_wake": True,' in main                                            # global default
+    assert "if v is not None}  # None = remove override, inherit" in main              # device: Arv
+    ui = ROOT / "timelapse-ui/src"
+    assert "key: 'headend_wake'" in (ui / "pages/GlobalConfigPage.tsx").read_text()
+    assert "key: 'system.headend_wake'" in (ui / "pages/CameraPage.tsx").read_text()
+    for page in ("CustomerPage.tsx", "SitePage.tsx", "SystemAdminPage.tsx"):
+        assert "<HeadendWakeSelect" in (ui / "pages" / page).read_text(), page
+    lib = (ui / "lib/headendWake.ts").read_text()
+    assert "if (tri === '') delete system.headend_wake" in lib                         # customer/site: Arv
+    assert ew.wake_allowed({}) and not ew.wake_allowed({"system": {"headend_wake": "false"}})
 
 
 def test_watcher_registered_without_touching_main():
     src = (ROOT / "headend/edge_sync.py").read_text(encoding="utf-8")
     assert '@router.on_event("startup")' in src and "start_edge_wake_watcher()" in src
+
+
+def test_agent_ignores_wake_when_not_allowed(tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT / "edge"))
+    import agent as agent_mod
+
+    a = agent_mod.EdgeAgent.__new__(agent_mod.EdgeAgent)
+    a._running = True
+    a._stop_event = threading.Event()
+    a._wake_event = threading.Event()
+    a._cfg = {"system": {"headend_wake": False}}
+    stamp = datetime.now(timezone.utc)
+    a._last_heartbeat = stamp
+    req = tmp_path / "wake-request"
+    req.write_text("")
+    monkeypatch.setattr(agent_mod.EdgeAgent, "WAKE_REQUEST_PATH", req)
+    monkeypatch.setattr(agent_mod.EdgeAgent, "WAKE_MIN_INTERVAL_S", 0)
+    ticks = iter(range(10))
+
+    def fake_wait(_t=None):
+        n = next(ticks)
+        if n == 1:
+            os.utime(req, (time.time() + 5, time.time() + 5))
+        if n >= 3:
+            a._running = False
+    a._stop_event.wait = fake_wait
+    a._wake_watch_loop()
+    assert not a._wake_event.is_set() and a._last_heartbeat == stamp
 
 
 def test_agent_syncs_at_once_on_wake_and_rate_limits(tmp_path, monkeypatch):
@@ -130,6 +202,7 @@ def test_agent_syncs_at_once_on_wake_and_rate_limits(tmp_path, monkeypatch):
     a._running = True
     a._stop_event = threading.Event()
     a._wake_event = threading.Event()
+    a._cfg = {}
     a._last_heartbeat = datetime.now(timezone.utc)
     req = tmp_path / "wake-request"
     req.write_text("")

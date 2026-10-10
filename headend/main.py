@@ -126,6 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
+from services.config_merge import merge_missing_defaults as _merge_missing_defaults
 from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
 from services.release_candidates import is_newer_release as _is_newer_release, latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
 from services import webauthn_autofill as _webauthn_autofill
@@ -4019,8 +4020,8 @@ def update_device_config(
             existing = {}
 
     for section, values in config.items():
-        if section in existing and isinstance(existing[section], dict):
-            existing[section].update(values)
+        if section in existing and isinstance(existing[section], dict) and isinstance(values, dict):
+            existing[section] = {k: v for k, v in {**existing[section], **values}.items() if v is not None}  # None = remove override, inherit
         else:
             existing[section] = values
 
@@ -13669,6 +13670,7 @@ _FACTORY_CONFIG_DEFAULTS = {
         "min_sleep_s": 60,
         "api_timeout_s": 15,
         "nightly_reboot": {"enabled": True, "time": "03:00", "window_minutes": 30, "min_uptime_hours": 6},
+        "headend_wake": True,  # Edge may be woken through its SSH tunnel (services/edge_wake.py)
         "device_pki": {
             "certificate_lifetime_days": 3650,
             "expired_certificate_policy": "grace_period",
@@ -13692,16 +13694,6 @@ _FACTORY_CONFIG_DEFAULTS = {
         "mfa_exempt_usernames": [],
     },
 }
-
-
-def _merge_missing_defaults(existing: dict, defaults: dict) -> dict:
-    result = dict(existing or {})
-    for key, value in (defaults or {}).items():
-        if key not in result:
-            result[key] = value
-        elif isinstance(result.get(key), dict) and isinstance(value, dict):
-            result[key] = _merge_missing_defaults(result[key], value)
-    return result
 
 
 _EXPIRED_CERTIFICATE_POLICIES = {"block", "grace_period", "continue_until_rotated"}

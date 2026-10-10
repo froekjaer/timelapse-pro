@@ -12,6 +12,8 @@ import { ArrowLeft, Terminal, Radio, Wifi, Camera, Save, CheckCircle,
          Power, PowerOff, RefreshCw, ChevronDown, ChevronRight, Database,
          Zap, Shield, HardDrive, Activity } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
+import { HeadendWakeSelect } from '../components/HeadendWakeSelect'
+import { wakeTriFrom } from '../lib/headendWake'
 import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
@@ -263,6 +265,7 @@ export function SystemAdminPage() {
   const [tunnelAutoOnApiLoss, setTunnelAutoOnApiLoss] = useState(true)
   const [tunnelAutoOnApiLossThresholdS, setTunnelAutoOnApiLossThresholdS] = useState('300')
   const [tunnelDeny, setTunnelDeny] = useState(false)
+  const [headendWake, setHeadendWake] = useState('')
   const [tunnelSaved, setTunnelSaved] = useState(false)
   const [multiCameraMode, setMultiCameraMode] = useState('single')
   const [nodeCameras, setNodeCameras] = useState<{camera_index:number, relay_gpio_camera:number, camera_name:string, serial_number:string}[]>([])
@@ -357,6 +360,7 @@ export function SystemAdminPage() {
       setTunnelAutoOnApiLoss(tun.auto_on_api_loss !== false)
       setTunnelAutoOnApiLossThresholdS(String(tun.auto_on_api_loss_threshold_s ?? '300'))
       setTunnelDeny(!!tun.deny)
+      setHeadendWake(wakeTriFrom(dc))
       setNodeCameras(dc.node_cameras ?? [])
     }).catch(() => {})
     api(`/api/admin/devices/${pathSegment(selectedDevice)}/config`).then((c: any) => {
@@ -489,7 +493,8 @@ export function SystemAdminPage() {
     await fetch(`${apiUrl}/api/admin/devices/${pathSegment(selectedDevice)}/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ssh_tunnel: cfg.ssh_tunnel }),
+      // system.headend_wake: null = inherit (the device PUT removes None overrides).
+      body: JSON.stringify({ ssh_tunnel: cfg.ssh_tunnel, system: { headend_wake: headendWake === '' ? null : headendWake === 'true' } }),
     })
     setTunnelSaved(true)
     setTimeout(() => setTunnelSaved(false), 2000)
@@ -1175,6 +1180,9 @@ export function SystemAdminPage() {
           tooltip="Forbyd SSH tunnel for denne enhed uanset enabled setting. Bruges til sites med sikkerhedspolitik der forbyder remote adgang. Tilsidesætter både enabled og auto_on_api_loss.">
           <Toggle value={tunnelDeny} onChange={setTunnelDeny} />
         </Field>
+        <div className="mt-3 max-w-xs">
+          <HeadendWakeSelect value={headendWake} onChange={setHeadendWake} />
+        </div>
         <div className="flex justify-end mt-3">
           <button onClick={saveTunnel}
             className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-colors ${

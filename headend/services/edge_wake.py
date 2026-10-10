@@ -13,6 +13,11 @@ through the tunnel), with `restrict` and a forced command that merely bumps
 authenticated /sync at once. No data travels over this path, and when nothing
 changes there is no traffic at all.
 
+Whether an Edge may be woken is configurable in the configuration hierarchy
+(global/customer/site/device/camera) as `system.headend_wake` (default on,
+Peter 2026-10-10). The Edge enforces it itself — with it off the agent
+removes the wake key, so its sshd refuses it — and this watcher does not try.
+
 Here: a background watcher computes each device's wake token (config_version
 + approved updates) every few seconds and, when it changes, connects through
 the tunnel port, refuses unless the Edge's host key matches the trusted
@@ -108,6 +113,19 @@ def _tunnel_targets(db) -> dict[str, tuple[int, str]]:
     return targets
 
 
+def wake_allowed(config: dict) -> bool:
+    """system.headend_wake from the merged hierarchy (global → device →
+    customer → site → camera). Missing = allowed (factory default)."""
+    value = ((config or {}).get("system") or {}).get("headend_wake", True)
+    return str(value).strip().lower() not in {"false", "0", "no", "off", "none"}
+
+
+def _effective_config(db, device_id: str) -> dict:
+    from main import get_config   # lazy: main imports the router that starts us
+
+    return get_config(device_id, _auth=None, db=db)
+
+
 class EdgeWakeWatcher:
     def __init__(self, session_factory, sender=send_wake):
         self._session_factory = session_factory
@@ -125,7 +143,11 @@ class EdgeWakeWatcher:
                 previous = self._tokens.get(device_id)
                 self._tokens[device_id] = token
                 if previous is not None and previous != token:
-                    changed.append(device_id)
+                    # Only now (something changed) pay for the merged config.
+                    if wake_allowed(_effective_config(db, device_id)):
+                        changed.append(device_id)
+                    else:
+                        log.info("Edge wake til %s ikke tilladt (system.headend_wake=false)", device_id)
         finally:
             db.close()
         for device_id in changed:

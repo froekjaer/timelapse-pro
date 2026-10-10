@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, MapPin, Building2, Camera, Save, Trash2, ChevronRight, CheckCircle } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
+import { HeadendWakeSelect } from '../components/HeadendWakeSelect'
+import { wakeTriFrom, withWake } from '../lib/headendWake'
 
 const AI_MODES = ['off', 'monitor', 'assist', 'autonomous', 'npu_first', 'lab']
 
@@ -147,6 +149,7 @@ export function SitePage() {
   const [timezone, setTimezone] = useState('Europe/Copenhagen')
   const [notes, setNotes] = useState('')
   const [btTotpSecret, setBtTotpSecret] = useState('')
+  const [headendWake, setHeadendWake] = useState('')
   const [btTotpSid, setBtTotpSid]       = useState('')
   const [edgeAiEnabled, setEdgeAiEnabled] = useState('')
   const [edgeAiMode, setEdgeAiMode]       = useState('')
@@ -180,6 +183,7 @@ export function SitePage() {
         setSftpPassword(sftp.password ?? '')
         setSftpPort(sftp.port != null ? String(sftp.port) : '')
         setSftpRemoteBase(sftp.remote_base ?? '')
+        setHeadendWake(wakeTriFrom(d.config_overrides))
         const btTotp = d.config_overrides?.bt_totp ?? {}
         setBtTotpSecret(btTotp.secret ?? '')
         setBtTotpSid(btTotp.sid ?? '')
@@ -241,6 +245,7 @@ export function SitePage() {
         },
         bt_totp: btTotpSecret ? { secret: btTotpSecret, sid: btTotpSid || 'site' } : {},
       }
+      Object.assign(config_overrides, withWake(config_overrides, headendWake))
       if (Object.keys(quality).length) config_overrides.quality = quality
       else delete config_overrides.quality
       await api(`/api/admin/sites/${siteId}`, {
@@ -422,6 +427,9 @@ export function SitePage() {
               placeholder="site-label"
               value={btTotpSid} onChange={e => setBtTotpSid(e.target.value)} />
           </div>
+        </div>
+        <div className="mt-4 max-w-xs">
+          <HeadendWakeSelect value={headendWake} onChange={setHeadendWake} />
         </div>
       </div>
 

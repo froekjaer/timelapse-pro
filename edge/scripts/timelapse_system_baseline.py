@@ -24,9 +24,9 @@ Steps (each reported in /run/timelapse/system-baseline.json):
                session recordings and the SIEM pending-event queues. Without
                it they were deleted on Edge2 and the agent could not restart
                (lab.60, 2026-10-05)
-  wake       — the `tlwake` account for the Headend's shared wake key: only
-               accepted through the SSH tunnel, `restrict`, forced command
-               timelapse_wake_request.sh (it can only ask the agent to sync)
+  wake       — the `tlwake` account for the Headend's shared wake key (the
+               key itself is applied live by the agent from
+               system.headend_wake — edge/wake_policy.py)
   bt-address — migrates Edge1's hand-made bt-set-addr.service address to
                /etc/timelapse/bt-address and disables that unit
                (timelapse-bt-address.service applies the address each boot)
@@ -162,18 +162,12 @@ def ramlog_exclude(root: Path, apply: bool = True) -> dict:
 
 WAKE_USER = "tlwake"
 WAKE_HOME = "var/lib/tlwake"
-WAKE_PUBKEY = Path(__file__).resolve().parents[1] / "config" / "timelapse-wake.pub"
-WAKE_COMMAND = "/opt/timelapse/edge/scripts/timelapse_wake_request.sh"
 
 
-def wake_authorized_keys_line(pubkey: str) -> str:
-    key = " ".join(pubkey.split()[:2])
-    return f'from="127.0.0.1,::1",restrict,command="{WAKE_COMMAND}" {key} timelapse-edge-wake\n'
-
-
-def wake_account(root: Path, apply: bool = True, pubkey_path: Path = WAKE_PUBKEY) -> dict:
-    if not pubkey_path.is_file():
-        return {"status": "skipped", "reason": "no wake public key in release"}
+def wake_account(root: Path, apply: bool = True) -> dict:
+    """The `tlwake` account and its .ssh dir. The key itself is managed live by
+    the agent (edge/wake_policy.py) from system.headend_wake in the config
+    hierarchy, so switching it off removes the key without a reboot."""
     changed = []
     if apply:
         import pwd
@@ -185,18 +179,14 @@ def wake_account(root: Path, apply: bool = True, pubkey_path: Path = WAKE_PUBKEY
             subprocess.run(["passwd", "-l", WAKE_USER], capture_output=True, timeout=30)
             changed.append("user")
     ssh_dir = root / WAKE_HOME / ".ssh"
-    keys = ssh_dir / "authorized_keys"
-    wanted = wake_authorized_keys_line(pubkey_path.read_text(encoding="utf-8"))
-    if not keys.is_file() or keys.read_text(encoding="utf-8") != wanted:
-        ssh_dir.mkdir(parents=True, exist_ok=True)
-        keys.write_text(wanted, encoding="utf-8")
-        changed.append("authorized_keys")
+    if not ssh_dir.is_dir():
+        ssh_dir.mkdir(parents=True)
+        changed.append("ssh_dir")
     ssh_dir.chmod(0o700)
-    keys.chmod(0o600)
     if apply:
         import pwd
         entry = pwd.getpwnam(WAKE_USER)
-        for path in (ssh_dir.parent, ssh_dir, keys):
+        for path in (ssh_dir.parent, ssh_dir):
             os.chown(path, entry.pw_uid, entry.pw_gid)
     return {"status": "changed" if changed else "ok", "changed": changed}
 

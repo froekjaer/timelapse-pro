@@ -69,6 +69,8 @@ ProtectSystem=strict
 # grants (which it writes for itself) already does.
 ReadWritePaths=/data /opt/timelapse /opt/timelapse/edge /run/timelapse /etc
 ReadWritePaths=-/var/log.hdd/timelapse
+# Headend wake key for the tlwake account, applied from system.headend_wake (edge/wake_policy.py).
+ReadWritePaths=-/var/lib/tlwake/.ssh
 ReadWritePaths=-/home/orangepi/.ssh -/home/pi/.ssh -/home/ubuntu/.ssh -/home/timelapse/.ssh -/home/emergency/.ssh -/home/servicetekniker/.ssh
 ProtectHome=yes
 

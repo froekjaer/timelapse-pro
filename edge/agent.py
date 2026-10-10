@@ -368,6 +368,7 @@ class EdgeAgent:
             try:
                 # Re-read schedule each iteration
                 self._cfg  = self._cfg_mgr.load()
+                self._apply_wake_policy()
                 schedule   = self._cfg.get("schedule", {})
                 mode       = schedule.get("capture_mode", "interval")
 
@@ -448,6 +449,25 @@ class EdgeAgent:
             log.debug("Wake-request fil ikke klar: %s", exc)
             return False
 
+    def _wake_allowed(self) -> bool:
+        try:
+            import wake_policy
+            return wake_policy.wake_allowed(self._cfg)
+        except Exception:
+            return False
+
+    def _apply_wake_policy(self) -> None:
+        """system.headend_wake (config hierarchy): with it off the wake key is
+        removed, so this Edge's sshd refuses it (edge/wake_policy.py)."""
+        try:
+            import wake_policy
+            changed = wake_policy.apply(self._cfg)
+            if changed:
+                log.info("Headend wake via tunnel %s (system.headend_wake)",
+                         "tilladt" if changed == "enabled" else "slået fra")
+        except Exception as exc:
+            log.warning("Kunne ikke anvende headend_wake-politik: %s", exc)
+
     def _wake_watch_loop(self) -> None:
         """Peter 2026-10-10: the Headend sends a wake through the SSH tunnel as
         soon as there is something for this Edge (LAB mode, config, approved
@@ -464,6 +484,8 @@ class EdgeAgent:
                 continue
             if last_mtime is None:
                 last_mtime = mtime
+            elif mtime != last_mtime and not self._wake_allowed():
+                last_mtime = mtime            # not allowed here: ignore (key is removed too)
             elif mtime != last_mtime and time.monotonic() - last_wake >= self.WAKE_MIN_INTERVAL_S:
                 # A burst of wakes inside the interval still fires once after it.
                 log.info("Headend wake via tunnel — synkroniserer nu")
@@ -482,6 +504,7 @@ class EdgeAgent:
         self._check_backup_request()
         self._repair_sshd_authorized_keys_command_missing_u_token()
         self._repair_emergency_breakglass_account()
+        self._apply_wake_policy()
         self._prepare_wake_request_file()
         threading.Thread(target=self._wake_watch_loop, name="headend-wake", daemon=True).start()
         self._reconcile_managed_units()
