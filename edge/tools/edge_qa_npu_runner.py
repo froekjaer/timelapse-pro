@@ -243,6 +243,30 @@ def _onnxruntime_result(image: Path, model: Path, runtime_info: dict[str, Any]) 
     return contract
 
 
+def _ensure_executable(binary: Path) -> None:
+    """Release updates copy files without the exec bit (only *.sh get it)."""
+    try:
+        if binary.is_file() and not os.access(binary, os.X_OK):
+            binary.chmod(binary.stat().st_mode | 0o755)
+    except OSError:
+        pass
+
+
+def _write_rgb_input(image: Path, size: int = 224) -> Path:
+    import tempfile
+
+    import cv2
+
+    img = cv2.imread(str(image), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"Could not read image: {image}")
+    rgb = cv2.cvtColor(cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+    fd, name = tempfile.mkstemp(prefix="edge-qa-", suffix=".rgb")
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(rgb.tobytes())
+    return Path(name)
+
+
 def _vendor_binary_result(
     vendor_binary: str,
     image: Path,
@@ -252,8 +276,20 @@ def _vendor_binary_result(
     command = shlex.split(vendor_binary)
     if not command:
         return None
-    cmd = command + ["--model", str(model or ""), "--image", str(image), "--json"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    _ensure_executable(Path(command[0]))
+    # The portable wrapper has no OpenCV: prepare the exact 224x224 RGB input
+    # here with the venv's OpenCV (same resize/colour steps the wrapper used).
+    raw = _write_rgb_input(image)
+    try:
+        cmd = command + ["--model", str(model or ""), "--input-raw", str(raw), "--json"]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            # Not an Orange Pi (exec format), missing NPU runtime, or a hang:
+            # fall back to CPU QA instead of reporting a runner error.
+            return None
+    finally:
+        raw.unlink(missing_ok=True)
     if proc.returncode != 0:
         return {
             **_cpu_fallback(image, model, runtime_info),

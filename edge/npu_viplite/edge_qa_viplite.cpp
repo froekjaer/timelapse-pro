@@ -12,8 +12,16 @@
 #include <vector>
 #include <unistd.h>
 
+#include <fstream>
+
+// OpenCV is optional (2026-10-05). The portable build used on every Edge
+// takes --input-raw (224x224 RGB HWC uint8 prepared by the Python runner with
+// the venv's OpenCV), so the binary only needs the base image's VIPLite
+// libraries and runs on both Jammy (Edge2, image builds) and Noble (Edge1).
+#ifdef TIMELAPSE_WITH_OPENCV
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#endif
 
 extern "C" {
 #include <awnn_lib.h>
@@ -36,6 +44,7 @@ const char* kLabels[] = {
 struct Args {
     std::string model;
     std::string image;
+    std::string input_raw;
     std::string input_layout = "nhwc_rgb";
     std::string input_dtype = "fp16";
     int width = 224;
@@ -125,7 +134,7 @@ void write_fp16(std::vector<uint8_t>& out, size_t index, float value) {
 
 void usage(const char* argv0) {
     std::cerr
-        << "Usage: " << argv0 << " --model edge_qa.nb --image image.jpg --json "
+        << "Usage: " << argv0 << " --model edge_qa.nb (--input-raw rgb224.raw | --image image.jpg) --json "
         << "[--input-layout nhwc_rgb|nchw_rgb|nchw_bgr] [--input-dtype fp16|uint8] [--classes 9]\n";
 }
 
@@ -141,6 +150,7 @@ Args parse_args(int argc, char** argv) {
         };
         if (key == "--model") args.model = next();
         else if (key == "--image") args.image = next();
+        else if (key == "--input-raw") args.input_raw = next();
         else if (key == "--input-layout") args.input_layout = next();
         else if (key == "--input-dtype") args.input_dtype = next();
         else if (key == "--width") args.width = std::stoi(next());
@@ -155,7 +165,7 @@ Args parse_args(int argc, char** argv) {
         }
     }
     if (args.model.empty()) throw std::runtime_error("--model is required");
-    if (args.image.empty()) throw std::runtime_error("--image is required");
+    if (args.image.empty() && args.input_raw.empty()) throw std::runtime_error("--image or --input-raw is required");
     if (args.classes < 1 || args.classes > static_cast<int>(std::size(kLabels))) {
         throw std::runtime_error("--classes must be 1..9");
     }
@@ -168,17 +178,34 @@ Args parse_args(int argc, char** argv) {
     return args;
 }
 
-std::vector<uint8_t> preprocess(const Args& args) {
+// width*height*3 bytes, RGB, row-major HWC.
+std::vector<uint8_t> load_rgb(const Args& args) {
+    const size_t expected = static_cast<size_t>(args.width) * args.height * 3;
+    if (!args.input_raw.empty()) {
+        std::ifstream in(args.input_raw, std::ios::binary);
+        std::vector<uint8_t> rgb((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (rgb.size() != expected) {
+            throw std::runtime_error("--input-raw must hold width*height*3 RGB bytes");
+        }
+        return rgb;
+    }
+#ifdef TIMELAPSE_WITH_OPENCV
     cv::Mat bgr = cv::imread(args.image, cv::IMREAD_COLOR);
     if (bgr.empty()) {
         throw std::runtime_error("Could not read image: " + args.image);
     }
     cv::Mat resized;
     cv::resize(bgr, resized, cv::Size(args.width, args.height), 0, 0, cv::INTER_AREA);
-
     cv::Mat rgb;
     cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+    return std::vector<uint8_t>(rgb.data, rgb.data + expected);
+#else
+    throw std::runtime_error("built without OpenCV: use --input-raw");
+#endif
+}
 
+std::vector<uint8_t> preprocess(const Args& args) {
+    const std::vector<uint8_t> rgb = load_rgb(args);
     const size_t pixels = static_cast<size_t>(args.width) * static_cast<size_t>(args.height);
     const bool use_uint8 = args.input_dtype == "uint8";
     std::vector<uint8_t> out(pixels * 3 * (use_uint8 ? sizeof(uint8_t) : sizeof(uint16_t)));
@@ -196,7 +223,7 @@ std::vector<uint8_t> preprocess(const Args& args) {
     };
 
     for (int y = 0; y < args.height; ++y) {
-        const uint8_t* row = rgb.ptr<uint8_t>(y);
+        const uint8_t* row = rgb.data() + static_cast<size_t>(y) * args.width * 3;
         for (int x = 0; x < args.width; ++x) {
             const size_t p = static_cast<size_t>(y) * args.width + x;
             const uint8_t r = row[x * 3 + 0];

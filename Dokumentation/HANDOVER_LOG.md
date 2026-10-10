@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-10-05 11:40 — fra Claude til Peter/næste session: NPU-QA kører på begge Edges (shadow); ramlog sletter ikke længere audit-logs; lab.61 klar
+
+- **Peter:** "merge #285 og lav lab.61 klar … Lad os få NPU til at virke på begge" + ja til flytning/beskyttelse af logs + GRC.
+- **lab.61:** #285 merged (`fa9a6f28`); edge-delta vs lab.60 = `agent.py`, `managed_units.py`, `timelapse-edge.service`. Edge1 = lab.60 og Edge2 = lab.59 (efter rollback) verificeret fil-for-fil mod artefakt-manifesterne. Ingen Headend-deploy nødvendig. Tag-kommando givet til Peter.
+- **NPU (ny PR, lab.62):** Portabel VIPLite-wrapper uden OpenCV (`--input-raw`; Python-runneren forbehandler med venv'ens OpenCV) bygget på Edge2 (Jammy, gcc 11.4, glibc 2.35) → linker kun base-imagets `libNBGlinker`/`libVIPhal` → kører på begge OS. Tjekket ind som `edge/npu_viplite/bin/edge_qa_viplite` (sha256 `15c16638…`, `BUILD.txt`) + model `edge/ai/models/edge_qa_edge_cnn_mini.nb` (sha256 `d98274bd…` = juli-eksporten). Manglende Allwinner-kilde `awnn_quantize.c/.h` vendoret (samme oprindelse som eksisterende `awnn_lib.c`). Adapteren bruger de medfølgende filer når config er tom; runneren sætter selv exec-bit (release-opdateringer kopierer uden) og falder tilbage til CPU hvis wrapperen ikke kan køre. Ny `quality.edge_ai.npu_influence`: `shadow` (standard — NPU-resultat gemmes pr. capture, CPU-dommen står) / `merge`. UI: Global Config → Kvalitet.
+- **Verificeret på begge Edges (rigtig kodevej QualityChecker→adapter→runner→NPU):** `engine edge_qa_viplite_aw_nn_v1, available True, influence shadow`, ~2 s/billede, CPU-dom urørt, exec-bit selvhelet. Ny wrapper = gammel OpenCV-wrapper på Edge1 for 3/3 billeder (identiske scores). Modellen er stadig ikke driftsklar (Edge1 → white_balance_cast, Edge2 → snow_or_dirt_on_lens på normale billeder) — derfor shadow.
+- **Ramlog/audit-logs:** baseline-trin `ramlog` tilføjer `XTRA_RSYNC_TO/FROM=(--exclude=/timelapse/)` til `/etc/default/orangepi-ramlog` (Orange Pi's egen udvidelseskrog; identisk fil på begge) → `rsync --delete` rører ikke `/var/log.hdd/timelapse` (break-glass-optagelser, SIEM pending-køer, totp/time-sync-logs). Verificeret med rsync-simulering og bash-sourcing af den rigtige vendor-fil.
+- **Test:** CI-ækvivalent 1693 passed (kun 4 lokale gpg-fejl). `tests/test_edge_npu_on_every_edge.py` (8).
+- **Næste:** lab.61 på Edge1 → Edge2; derefter lab.62 (denne PR). NPU-model-accept (Travbyen-suiten) før `npu_influence=merge`.
 ### Handover 2026-10-09 12:45 — fra Claude til Peter/næste session: Safari-passkey hænger igen på MacBook → passkey AutoFill + timeout/abort på registrering og konsol-step-up
 
 - **Peter:** "Nu hænger login igen på Safari på min Macbook Pro. Chrome virker fint … fotografer bruger kun Mac og Safari."
