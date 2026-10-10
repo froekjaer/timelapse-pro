@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-10 11:45 — fra Claude til Peter/næste session: LAB-start viser rigtige trin (feedback) i stedet for gættet nedtælling
+
+- **Peter:** "kan du egentlig også lave, så der kommer nogle feedback step, når man har trykket start lab, så man kan se at der sker noget, og hvor langt den er".
+- **Før:** LAB-siden viste en gættet nedtælling ("Venter ~90s") bygget på den gamle antagelse om 60 s edge-poll.
+- **Nu (ny PR):** trin rapporteres når de sker: *Anmodning sendt* (UI) → *Edge vækket gennem SSH-tunnel* (Headend, `edge_wake` ved succes) → *Edge har modtaget LAB* → *Kameraet tændes og varmer op* (med nedtælling fra `relay_on_seconds_before`) → *Forbinder til kameraet* (+ genforsøg/strøm af-på) → *Kameraet er klar* → *Kameraparametre hentet*; fejl vises rødt med Edgens egen besked. Tid pr. trin (+N s) og samlet tid; uden svar efter 20 s vises hint om SSH-tunnel.
+- **Teknik:** `headend/services/lab_progress.py` — kun i hukommelsen (må ikke skrive device_config: det ændrer config_version ⇒ wake + config-pull pr. trin). `POST /api/edge/lab-progress/{id}` (device-auth som /sync) og `GET …` (bruger-auth + `_ensure_capture_device_access`) i `edge_sync.py` (main.py uændret). Edge: `_lab_progress()` fire-and-forget i tråd (forsinker aldrig LAB). UI: `components/LabStartProgress.tsx`; starttid = serverens tid hentet lige før LAB slås til (ingen ur-skævhed).
+- **Verificeret:** komponenten renderet i midlertidig preview med simulerede events (trin, nedtælling, +N s) — ser rigtigt ud; ikke set mod rigtig Edge endnu. Tests `tests/test_lab_start_progress.py` (6) inkl. route-auth-coverage; CI-ækvivalent 1719 passed; tsc + eslint-gate grønne. Edge + Headend ⇒ deploy Headend + lab.66.
+
 ### Handover 2026-10-10 11:15 — fra Claude til Peter/næste session: LAB-start målt på lab.64 → kameraets warm-up kørte 3 gange (30 s)
 
 - **lab.64 live** (#334 Edge2 10:53:34, #335 Edge1 10:55:36); #291 deployet — én wake pr. ændring nu.
