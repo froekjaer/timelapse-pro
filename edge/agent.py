@@ -1800,6 +1800,10 @@ class EdgeAgent:
             lab_now = debug_cfg.get("enabled", False)
             if lab_now:
                 log.info("Lab mode aktiveret via config-ændring")
+                # Leave the normal tick's idle sleep now: LAB must start at
+                # once, not after the rest of a capture-interval sleep
+                # (seen 2026-10-10: wake in 2 s, then "Sleeping 64s").
+                self._wake_event.set()
             else:
                 log.info("Lab mode deaktiveret via config-ændring")
         except Exception as exc:
@@ -3728,6 +3732,14 @@ class EdgeAgent:
                     except Exception:
                         pass
                     self._lab_relay_on = False
+
+        # LAB may have been switched off in the very config we just pulled
+        # (the loop chose LAB from the previous config). Never power the
+        # camera up for a session that has already ended (seen 2026-10-10).
+        # set_debug_mode always writes enabled: False explicitly when LAB ends.
+        if (self._cfg.get("debug_mode") or {}).get("enabled") is False and not getattr(self, "_lab_relay_on", False):
+            log.info("LAB MODE — slået fra før kameraet blev klargjort; springer over")
+            return
 
         # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
