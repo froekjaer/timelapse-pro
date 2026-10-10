@@ -10,6 +10,7 @@ Montér i main.py:
 
 Endpoints:
     POST /api/edge/sync/{device_id}
+    POST /api/edge/wait/{device_id}   (long-poll "wake", see edge_wait below)
 
 Before 2026-08-19, Edge ran three independently-timed loops that each made
 their own HTTP round-trip: a 5-minute config/update-check poll, a 60-minute
@@ -29,13 +30,16 @@ back to a pre-2026-08-19 artifact must keep working against them.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+import time
 
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import get_db, Device, BreakGlassAccount, now_utc
+from database import get_db, Device, BreakGlassAccount, PendingUpdate, SessionLocal, now_utc
 from cmdb import report_inventory as _cmdb_report_inventory, _decrypt as _bg_decrypt
 from siem import ingest_events as _siem_ingest_events
 from technician_keys import resolve_authorized_technician_keys
@@ -181,3 +185,60 @@ async def edge_sync(
         "commissioning_key_disabled": bool(device.commissioning_key_disabled) if device else False,
         "break_glass": break_glass_payload,
     }
+
+
+# ── Wake long-poll (Peter 2026-10-10) ─────────────────────────────────────────
+# "når SSH tunnelen er oppe, sendes der et poll-request, så snart der er en
+# besked klar … specielt når jeg skal i LAB mode." Headend cannot call an Edge
+# behind NAT/4G, so while its tunnel is up the Edge holds one request here.
+# It returns as soon as the device's wake token changes (config edited — LAB
+# mode lives in the device config — or an update approved), otherwise after
+# timeout_s; the Edge then runs its normal /sync immediately. Same device
+# authentication as /sync; nothing is delivered here, it only says "sync now".
+
+WAIT_MIN_S, WAIT_MAX_S, WAIT_STEP_S = 5, 55, 2.0
+
+
+class EdgeWaitRequest(BaseModel):
+    since: str = ""
+    timeout_s: int = 50
+
+
+def wake_token(db: Session, device_id: str) -> str:
+    """Changes whenever the Edge has something new to pick up via /sync."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    approved = sorted(
+        u.id for u in db.query(PendingUpdate).filter(
+            PendingUpdate.status.in_(["approved", "rollback_requested"])
+        ).all()
+    )
+    raw = f"{getattr(device, 'config_version', '') or ''}|{approved}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _fresh_token(device_id: str) -> str:
+    # A new session per check: one long-lived session would keep returning
+    # the rows it already loaded (identity map) and never see the change.
+    db = SessionLocal()
+    try:
+        return wake_token(db, device_id)
+    finally:
+        db.close()
+
+
+@router.post("/wait/{device_id}")
+async def edge_wait(
+    device_id: str,
+    req: EdgeWaitRequest,
+    _auth: None = Depends(_require_edge_sync_auth),
+):
+    timeout = max(WAIT_MIN_S, min(WAIT_MAX_S, int(req.timeout_s)))
+    deadline = time.monotonic() + timeout
+    while True:
+        token = await asyncio.to_thread(_fresh_token, device_id)
+        if not req.since or token != req.since:
+            # First call (no token yet) only hands out the current token.
+            return {"wake": bool(req.since), "token": token}
+        if time.monotonic() >= deadline:
+            return {"wake": False, "token": token}
+        await asyncio.sleep(WAIT_STEP_S)

@@ -305,6 +305,9 @@ class EdgeAgent:
         self._last_update_check: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._last_inventory:    datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
+        # Set by the wake long-poll (or shutdown) to end the idle sleep early.
+        self._wake_event = threading.Event()
+        self._wake_token = ""
         self._last_siem_emit: dict[str, datetime] = {}
         self._pending_siem_cursor: str | None = None
         self._siem_cursor_path = self._cfg_mgr.base_dir / "siem_journal.cursor"
@@ -350,6 +353,7 @@ class EdgeAgent:
         log.info("Signal %d received — shutting down gracefully…", signum)
         self._running = False
         self._stop_event.set()
+        self._wake_event.set()
 
     # ── Public entry points ────────────────────────────────────────────────
 
@@ -424,6 +428,34 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("Afstemning af managed units fejlede: %s", exc)
 
+    def _start_wake_channel(self) -> None:
+        threading.Thread(target=self._wake_channel_loop, name="wake-longpoll", daemon=True).start()
+
+    def _wake_channel_loop(self) -> None:
+        """While the SSH tunnel is up, hold a long-poll to Headend's
+        /edge/wait so a config change (e.g. LAB mode) or an approved update is
+        picked up within seconds instead of at the next 5-minute sync
+        (Peter, 2026-10-10). Without a tunnel it idles; the normal sync
+        interval still applies."""
+        while self._running and not self._stop_event.is_set():
+            diag = self._cfg.get("diagnostics", {}) or {}
+            enabled = str(diag.get("wake_channel_enabled", True)).strip().lower() not in {"false", "0", "no", "off"}
+            tunnel_up = bool(self._tunnel and self._tunnel.is_connected())
+            if not enabled or not tunnel_up:
+                self._stop_event.wait(15)
+                continue
+            timeout_s = max(5, min(55, int(diag.get("wake_timeout_s", 50) or 50)))
+            ok, data = self._api.wait_for_wake(self._wake_token, timeout_s)
+            if not ok or not isinstance(data, dict) or "token" not in data:
+                # Older Headend (404) or network trouble: back off, sync still runs.
+                self._stop_event.wait(300 if (data or {}).get("status") == 404 else 30)
+                continue
+            previous, self._wake_token = self._wake_token, str(data["token"])
+            if data.get("wake") and previous:
+                log.info("Headend wake — synkroniserer nu")
+                self._last_heartbeat = datetime.min.replace(tzinfo=timezone.utc)
+                self._wake_event.set()
+
     def _startup(self) -> None:
         """Perform startup tasks after boot/resume."""
         log.info("Running startup sequence…")
@@ -450,6 +482,7 @@ class EdgeAgent:
                 self._tunnel = SshTunnelManager(self._cfg, self._api)
                 self._tunnel.start()
                 log.info("SSH tunnel manager initialiseret")
+                self._start_wake_channel()
             except Exception as exc:
                 log.warning("SSH tunnel manager fejl: %s", exc)
 
@@ -1000,7 +1033,10 @@ class EdgeAgent:
         # Smart wake-up: use max_idle_sleep_s to reduce unnecessary wake-ups
         # Default 300s (5 min) - configurable via system.max_idle_sleep_s
         max_idle_sleep = int(self._cfg.get("system", {}).get("max_idle_sleep_s", 300))
-        self._stop_event.wait(min(sleep_s, max_idle_sleep))  # wake at least every max_idle_sleep_s
+        # wake at least every max_idle_sleep_s — or at once when Headend has
+        # something for us (wake long-poll) or on shutdown.
+        if self._wake_event.wait(min(sleep_s, max_idle_sleep)):
+            self._wake_event.clear()
 
     def _run_capture_slot(self, now: datetime, mode: str, capture_slot: dict) -> None:
         slot_id = capture_slot["slot_id"]

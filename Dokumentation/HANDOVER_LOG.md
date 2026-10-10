@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-10-10 09:15 — fra Claude til Peter/næste session: lab.62 verificeret på Edge1 (NPU i drift, shadow); wake long-poll så LAB mode slår igennem på sekunder
+
+- **lab.62 på Edge1 (#331, deployed 08:52:59):** release v2.8.1-lab.62; alle units active; baseline `ramlog: changed` (`XTRA_RSYNC_TO/FROM=(--exclude=/timelapse/)` i `/etc/default/orangepi-ramlog`); wrapper sha256 `15c16638…`. **Capture 09:00 kørte på NPU'en i drift:** `engine edge_qa_viplite_aw_nn_v1, available True, influence shadow, model /opt/timelapse/edge/ai/models/edge_qa_edge_cnn_mini.nb` — NPU sagde `white_balance_cast` 0.947, CPU-dommen stod (`passed True, cause ok`, blur 1219). Exec-bit selvhelet (`-rwxr-xr-x`). Edge2 (#330) klar til godkendelse.
+- **Merge-oprydning:** #287 merged+deployet af Peter; #288 og #286 stoppede på konflikter (reel: én import-linje i main.py som både #287 og #288 tilføjede — begge beholdt) → løst, fuld suite grøn, merged efter grøn CI. Headend deployet `a482832e` (08:45). main.py = 17550 (ratchet-grænsen nået).
+- **Ny PR — wake long-poll (Peter: "når SSH tunnelen er oppe, sendes der et poll-request, så snart der er en besked klar … LAB mode … tager så lang tid"):** Før: sync hvert 5. min + op til 5 min søvn ⇒ LAB-skift kunne tage 5–10 min. Nu: `POST /api/edge/wait/{device_id}` i `headend/edge_sync.py` (samme device-auth som /sync; ingen main.py-ændring) svarer straks når enhedens wake-token ændres (`config_version` — LAB-toggle opdaterer den, verificeret i `set_debug_mode` — eller godkendte opdateringer), ellers efter ≤55 s. Edge: tråd `wake-longpoll` holder forespørgslen kun mens SSH-tunnelen er oppe; ved wake nulstilles `_last_heartbeat` og hovedløkkens søvn afbrydes (`_wake_event`) ⇒ sync med det samme. Gammel Headend (404) ⇒ back-off 300 s; normal sync uændret. Konfigurerbart: `diagnostics.wake_channel_enabled` (default true), `diagnostics.wake_timeout_s` (50). nginx `/api/` default read-timeout 60 s > 55 s.
+- **Test:** `tests/test_edge_wake_longpoll.py` (8): første kald giver kun token, wake ved token-skift, timeout, token følger config_version + godkendte opdateringer, samme auth som sync, Edge vækker hovedløkken og tvinger sync, ingen long-poll uden tunnel. CI-ækvivalent 1708 passed. Ikke kørt på Edge endnu → lab.63.
+
 ### Handover 2026-10-05 11:40 — fra Claude til Peter/næste session: NPU-QA kører på begge Edges (shadow); ramlog sletter ikke længere audit-logs; lab.61 klar
 
 - **Peter:** "merge #285 og lav lab.61 klar … Lad os få NPU til at virke på begge" + ja til flytning/beskyttelse af logs + GRC.

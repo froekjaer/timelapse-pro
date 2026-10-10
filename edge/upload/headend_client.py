@@ -191,6 +191,24 @@ class HeadendClient:
         log.debug("Sending heartbeat for %s", self._device_id)
         return self._post(f"/heartbeat/{self._device_id}", payload)
 
+    def wait_for_wake(self, since: str, timeout_s: int = 50) -> tuple[bool, Optional[dict]]:
+        """Long-poll /edge/wait (2026-10-10): blocks up to timeout_s and returns
+        {"wake": bool, "token": str}. Safe from its own thread: ``_session``
+        builds a fresh session per call."""
+        path = f"/edge/wait/{self._device_id}"
+        payload = {"since": since, "timeout_s": int(timeout_s)}
+        try:
+            headers = request_signature_headers(self._cfg_mgr.api_token, "POST", path, payload)
+            headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "POST", path, payload))
+            resp = self._session.post(f"{self._base_url}{path}", json=payload, headers=headers,
+                                      timeout=(10, int(timeout_s) + 20), verify=True)
+            if resp.status_code == 200:
+                return True, resp.json()
+            return False, {"status": resp.status_code}
+        except Exception as exc:
+            log.debug("wake long-poll failed: %s", exc)
+            return False, None
+
     def sync(
         self,
         diagnostics: dict,
