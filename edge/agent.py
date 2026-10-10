@@ -305,6 +305,9 @@ class EdgeAgent:
         self._last_update_check: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._last_inventory:    datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
+        # Set by the Headend wake (through the SSH tunnel) or on shutdown to
+        # end the idle sleep early — see _wake_watch_loop.
+        self._wake_event = threading.Event()
         self._last_siem_emit: dict[str, datetime] = {}
         self._pending_siem_cursor: str | None = None
         self._siem_cursor_path = self._cfg_mgr.base_dir / "siem_journal.cursor"
@@ -350,6 +353,7 @@ class EdgeAgent:
         log.info("Signal %d received — shutting down gracefully…", signum)
         self._running = False
         self._stop_event.set()
+        self._wake_event.set()
 
     # ── Public entry points ────────────────────────────────────────────────
 
@@ -364,6 +368,7 @@ class EdgeAgent:
             try:
                 # Re-read schedule each iteration
                 self._cfg  = self._cfg_mgr.load()
+                self._apply_wake_policy()
                 schedule   = self._cfg.get("schedule", {})
                 mode       = schedule.get("capture_mode", "interval")
 
@@ -424,6 +429,71 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("Afstemning af managed units fejlede: %s", exc)
 
+    WAKE_REQUEST_PATH = Path("/run/timelapse/wake-request")
+    WAKE_MIN_INTERVAL_S = 10
+
+    def _prepare_wake_request_file(self) -> bool:
+        """The Headend's shared wake key may only `touch -c` this file (forced
+        command, tunnel-only — see timelapse_wake_request.sh). We own it and
+        hand it to the tlwake account so that touch works."""
+        try:
+            import pwd
+            path = self.WAKE_REQUEST_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(mode=0o600, exist_ok=True)
+            entry = pwd.getpwnam("tlwake")
+            os.chown(path, entry.pw_uid, entry.pw_gid)
+            path.chmod(0o600)
+            return True
+        except Exception as exc:   # account not provisioned yet (baseline) → normal sync only
+            log.debug("Wake-request fil ikke klar: %s", exc)
+            return False
+
+    def _wake_allowed(self) -> bool:
+        try:
+            import wake_policy
+            return wake_policy.wake_allowed(self._cfg)
+        except Exception:
+            return False
+
+    def _apply_wake_policy(self) -> None:
+        """system.headend_wake (config hierarchy): with it off the wake key is
+        removed, so this Edge's sshd refuses it (edge/wake_policy.py)."""
+        try:
+            import wake_policy
+            changed = wake_policy.apply(self._cfg)
+            if changed:
+                log.info("Headend wake via tunnel %s (system.headend_wake)",
+                         "tilladt" if changed == "enabled" else "slået fra")
+        except Exception as exc:
+            log.warning("Kunne ikke anvende headend_wake-politik: %s", exc)
+
+    def _wake_watch_loop(self) -> None:
+        """Peter 2026-10-10: the Headend sends a wake through the SSH tunnel as
+        soon as there is something for this Edge (LAB mode, config, approved
+        update); sync at once instead of at the next 5-minute poll. One stat
+        per second, no network traffic of its own."""
+        last_mtime = None
+        last_wake = 0.0
+        while self._running and not self._stop_event.is_set():
+            try:
+                mtime = self.WAKE_REQUEST_PATH.stat().st_mtime
+            except OSError:
+                self._prepare_wake_request_file()
+                self._stop_event.wait(30)
+                continue
+            if last_mtime is None:
+                last_mtime = mtime
+            elif mtime != last_mtime and not self._wake_allowed():
+                last_mtime = mtime            # not allowed here: ignore (key is removed too)
+            elif mtime != last_mtime and time.monotonic() - last_wake >= self.WAKE_MIN_INTERVAL_S:
+                # A burst of wakes inside the interval still fires once after it.
+                log.info("Headend wake via tunnel — synkroniserer nu")
+                last_wake, last_mtime = time.monotonic(), mtime
+                self._last_heartbeat = datetime.min.replace(tzinfo=timezone.utc)
+                self._wake_event.set()
+            self._stop_event.wait(1)
+
     def _startup(self) -> None:
         """Perform startup tasks after boot/resume."""
         log.info("Running startup sequence…")
@@ -434,6 +504,9 @@ class EdgeAgent:
         self._check_backup_request()
         self._repair_sshd_authorized_keys_command_missing_u_token()
         self._repair_emergency_breakglass_account()
+        self._apply_wake_policy()
+        self._prepare_wake_request_file()
+        threading.Thread(target=self._wake_watch_loop, name="headend-wake", daemon=True).start()
         self._reconcile_managed_units()
 
         # 2. Send startup heartbeat
@@ -1000,7 +1073,10 @@ class EdgeAgent:
         # Smart wake-up: use max_idle_sleep_s to reduce unnecessary wake-ups
         # Default 300s (5 min) - configurable via system.max_idle_sleep_s
         max_idle_sleep = int(self._cfg.get("system", {}).get("max_idle_sleep_s", 300))
-        self._stop_event.wait(min(sleep_s, max_idle_sleep))  # wake at least every max_idle_sleep_s
+        # wake at least every max_idle_sleep_s — or at once on a Headend wake
+        # (through the SSH tunnel) or on shutdown.
+        if self._wake_event.wait(min(sleep_s, max_idle_sleep)):
+            self._wake_event.clear()
 
     def _run_capture_slot(self, now: datetime, mode: str, capture_slot: dict) -> None:
         slot_id = capture_slot["slot_id"]

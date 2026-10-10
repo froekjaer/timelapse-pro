@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, MapPin, Save, Trash2, Plus, ChevronRight, CheckCircle, Camera } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { HeadendWakeSelect } from '../components/HeadendWakeSelect'
+import { wakeTriFrom, withWake } from '../lib/headendWake'
 import { useAuth } from '../context/AuthContext'
 
 const AI_MODES = ['off', 'monitor', 'assist', 'autonomous', 'npu_first', 'lab']
@@ -161,6 +163,7 @@ export function CustomerPage() {
   const [address, setAddress]         = useState('')
   const [notes, setNotes]             = useState('')
   const [btTotpSecret, setBtTotpSecret] = useState('')
+  const [headendWake, setHeadendWake] = useState('')
   const [btTotpSid, setBtTotpSid]       = useState('')
   const [edgeAiEnabled, setEdgeAiEnabled] = useState('')
   const [edgeAiMode, setEdgeAiMode]       = useState('')
@@ -210,6 +213,7 @@ export function CustomerPage() {
         setContactPhone(d.contact_phone ?? '')
         setAddress(d.address ?? '')
         setNotes(d.notes ?? '')
+        setHeadendWake(wakeTriFrom(d.config_overrides))
         const btTotp = d.config_overrides?.bt_totp ?? {}
         setBtTotpSecret(btTotp.secret ?? '')
         setBtTotpSid(btTotp.sid ?? '')
@@ -318,6 +322,7 @@ export function CustomerPage() {
         ...(customer?.config_overrides ?? {}),
         bt_totp: btTotpSecret ? { secret: btTotpSecret, sid: btTotpSid || 'kunde' } : {},
       }
+      Object.assign(config_overrides, withWake(config_overrides, headendWake))
       if (Object.keys(quality).length) config_overrides.quality = quality
       else delete config_overrides.quality
       await api(`/api/admin/customers/${customerId}`, {
@@ -600,6 +605,9 @@ export function CustomerPage() {
               placeholder="kunde-label"
               value={btTotpSid} onChange={e => setBtTotpSid(e.target.value)} />
           </div>
+        </div>
+        <div className="mt-4 max-w-xs">
+          <HeadendWakeSelect value={headendWake} onChange={setHeadendWake} />
         </div>
       </div>
 

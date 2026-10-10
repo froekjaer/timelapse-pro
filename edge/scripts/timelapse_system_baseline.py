@@ -24,6 +24,9 @@ Steps (each reported in /run/timelapse/system-baseline.json):
                session recordings and the SIEM pending-event queues. Without
                it they were deleted on Edge2 and the agent could not restart
                (lab.60, 2026-10-05)
+  wake       — the `tlwake` account for the Headend's shared wake key (the
+               key itself is applied live by the agent from
+               system.headend_wake — edge/wake_policy.py)
   bt-address — migrates Edge1's hand-made bt-set-addr.service address to
                /etc/timelapse/bt-address and disables that unit
                (timelapse-bt-address.service applies the address each boot)
@@ -31,6 +34,7 @@ Steps (each reported in /run/timelapse/system-baseline.json):
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -156,6 +160,37 @@ def ramlog_exclude(root: Path, apply: bool = True) -> dict:
     return {"status": "changed"}
 
 
+WAKE_USER = "tlwake"
+WAKE_HOME = "var/lib/tlwake"
+
+
+def wake_account(root: Path, apply: bool = True) -> dict:
+    """The `tlwake` account and its .ssh dir. The key itself is managed live by
+    the agent (edge/wake_policy.py) from system.headend_wake in the config
+    hierarchy, so switching it off removes the key without a reboot."""
+    changed = []
+    if apply:
+        import pwd
+        try:
+            pwd.getpwnam(WAKE_USER)
+        except KeyError:
+            subprocess.run(["useradd", "--system", "--create-home", "--home-dir", "/" + WAKE_HOME,
+                            "--shell", "/bin/sh", WAKE_USER], check=True, capture_output=True, timeout=30)
+            subprocess.run(["passwd", "-l", WAKE_USER], capture_output=True, timeout=30)
+            changed.append("user")
+    ssh_dir = root / WAKE_HOME / ".ssh"
+    if not ssh_dir.is_dir():
+        ssh_dir.mkdir(parents=True)
+        changed.append("ssh_dir")
+    ssh_dir.chmod(0o700)
+    if apply:
+        import pwd
+        entry = pwd.getpwnam(WAKE_USER)
+        for path in (ssh_dir.parent, ssh_dir):
+            os.chown(path, entry.pw_uid, entry.pw_gid)
+    return {"status": "changed" if changed else "ok", "changed": changed}
+
+
 def _address_from_hcitool_cmd(unit_text: str) -> str | None:
     match = re.search(r"0x3f\s+0x0070((?:\s+[0-9A-Fa-f]{2}){6})", unit_text)
     if not match:
@@ -180,7 +215,7 @@ def migrate_bt_address(root: Path, apply: bool = True) -> dict:
 
 
 STEPS = (("journald", journald), ("sshd", sshd), ("cron", legacy_reboot_cron), ("ramlog", ramlog_exclude),
-         ("bt_address", migrate_bt_address))
+         ("wake", wake_account), ("bt_address", migrate_bt_address))
 
 
 def main(argv: list[str]) -> int:

@@ -225,6 +225,8 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
     label: 'System',
     description: 'Timeouts, recovery-parametre og natlig genstart af Edges.',
     fields: [
+      { key: 'headend_wake', label: 'Vækning gennem SSH-tunnel', type: 'boolean', default: true,
+        tooltip: 'Headend må bede en Edge hente nyt med det samme (fx LAB mode, ny config, godkendt opdatering) gennem SSH-tunnelen. Nøglen virker kun gennem tunnelen og kan kun udløse en sync. Kan slås fra pr. kunde, site, Edge og kamera.' },
       { key: 'nightly_reboot.enabled', label: 'Natlig genstart', type: 'boolean', default: true,
         tooltip: 'Edgen genstarter én gang hver nat i det valgte tidsrum. Den venter, hvis kameraet er i gang, en opdatering afventer bekræftelse, eller en tekniker er logget ind. Kan slås fra eller flyttes pr. kunde, site og kamera.' },
       { key: 'nightly_reboot.time', label: 'Genstart kl.', type: 'select', options: NIGHTLY_REBOOT_TIMES, default: '03:00',
