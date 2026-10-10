@@ -128,6 +128,7 @@ from services.headend_update_state import mark_headend_update_deployed, mark_hea
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
 from services.release_candidates import is_newer_release as _is_newer_release, latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
+from services import webauthn_autofill as _webauthn_autofill
 from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors, login_allow_credentials as _webauthn_login_allow_credentials
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
@@ -885,7 +886,7 @@ def webauthn_register_begin(payload: dict, request: Request, current_user=Depend
         exclude_credentials      = exclude_creds,
         authenticator_selection  = AuthenticatorSelectionCriteria(
             user_verification    = UserVerificationRequirement.PREFERRED,
-            resident_key         = ResidentKeyRequirement.DISCOURAGED,
+            resident_key         = ResidentKeyRequirement.PREFERRED,  # discoverable → shown by passkey AutoFill
         ),
     )
 
@@ -944,6 +945,8 @@ def webauthn_login_begin(payload: dict, request: Request, db: Session = Depends(
     import webauthn, json as _json
     from database import WebAuthnCredential
     username = payload.get("username", "")
+    if not username:  # passkey AutoFill / usernameless (services/webauthn_autofill.py)
+        return _webauthn_autofill.begin(db, Settings, _webauthn_settings(db, request)[0])
     user = db.query(User).filter_by(username=username, is_active=True).first()
     if not user:
         raise HTTPException(status_code=404, detail="Bruger ikke fundet")
@@ -971,23 +974,23 @@ def webauthn_login_complete(payload: dict, request: Request, db: Session = Depen
     import webauthn, json as _json
     from database import WebAuthnCredential
     username = payload.get("username", "")
-    user = db.query(User).filter_by(username=username, is_active=True).first()
-    if not user:
+    user = db.query(User).filter_by(username=username, is_active=True).first() if username else None
+    if not username:  # passkey AutoFill: user comes from the credential that answered
+        try:
+            user, setting, cred = _webauthn_autofill.resolve(db, payload, Settings, WebAuthnCredential, User)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
+    elif not user:
         raise HTTPException(status_code=401)
-
-    setting = db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").first()
-    if not setting:
-        raise HTTPException(status_code=400, detail="Ingen aktiv udfordring")
-
-    opts = _json.loads(setting.value)
-    challenge = webauthn.base64url_to_bytes(opts["challenge"])
-
-    credential_id = webauthn.base64url_to_bytes(payload.get("rawId", ""))
-    cred = db.query(WebAuthnCredential).filter_by(
-        user_id=user.id, credential_id=credential_id
-    ).first()
-    if not cred:
-        raise HTTPException(status_code=401, detail="Credential ikke fundet")
+    else:
+        setting = db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").first()
+        if not setting:
+            raise HTTPException(status_code=400, detail="Ingen aktiv udfordring")
+        credential_id = webauthn.base64url_to_bytes(payload.get("rawId", ""))
+        cred = db.query(WebAuthnCredential).filter_by(user_id=user.id, credential_id=credential_id).first()
+        if not cred:
+            raise HTTPException(status_code=401, detail="Credential ikke fundet")
+    challenge = webauthn.base64url_to_bytes(_json.loads(setting.value)["challenge"])
 
     try:
         rp_id, _rp_name, origin = _webauthn_settings(db, request)
@@ -998,13 +1001,14 @@ def webauthn_login_complete(payload: dict, request: Request, db: Session = Depen
             expected_origin     = origin,
             credential_public_key = cred.public_key,
             credential_current_sign_count = cred.sign_count,
+            require_user_verification = not username,
         )
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Autentificering fejlede: {e}")
 
     cred.sign_count = verification.new_sign_count
     cred.rp_id = cred.rp_id or rp_id  # bind legacy credentials to the RP they just proved
-    db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
+    db.delete(setting)  # single use (per-user or AutoFill challenge)
     db.commit()
 
     session_token = _create_token({
