@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from database import CaptureAccessLog, get_db
+from tenant_scope import _is_platform_admin
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 
 
@@ -36,7 +37,7 @@ def search_capture_access(
 ):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     query = db.query(CaptureAccessLog).filter(CaptureAccessLog.accessed_at >= since)
-    if user.role not in {"super_admin", "admin", "auditor"}:
+    if not _is_platform_admin(user) and user.role != "auditor":
         if not user.customer_id:
             return []
         query = query.filter(CaptureAccessLog.customer_id == user.customer_id)

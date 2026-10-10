@@ -39,7 +39,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from database import Camera, Customer, Device, Site, User
+from database import Camera, Customer, Device, DeviceInventory, Site, User
 
 
 def _is_platform_admin(user: User | None) -> bool:
@@ -140,3 +140,18 @@ def _ensure_platform_admin(user: User | None) -> None:
     """403 unless the user may see all tenants (platform-wide views/actions)."""
     if not _is_platform_admin(user):
         raise HTTPException(status_code=403, detail="Kun platform-administratorer")
+
+
+def _visible_only(db: Session, user: User | None, items: list, device_id_of) -> list:
+    """Keep only items whose device the user may see (all for platform admins)."""
+    allowed = _visible_device_ids(db, user)
+    return items if allowed is None else [item for item in items if device_id_of(item) in allowed]
+
+
+def _tenant_inventories(db: Session, user: User | None) -> list:
+    """DeviceInventory rows the user may see, ordered by device_id."""
+    q = db.query(DeviceInventory)
+    allowed = _visible_device_ids(db, user)
+    if allowed is not None:
+        q = q.filter(DeviceInventory.device_id.in_(sorted(allowed) or ["__none__"]))
+    return q.order_by(DeviceInventory.device_id).all()

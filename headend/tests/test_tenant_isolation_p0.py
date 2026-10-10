@@ -251,3 +251,94 @@ def test_lifecycle_transition_own_tenant_not_tenant_blocked(db):
 def test_lifecycle_reconcile_is_platform_admin_only(db):
     reconcile = _lifecycle_endpoints()["/api/admin/edge-lifecycle/reconcile"]
     assert _status(reconcile, current_user=_tenant_admin(), db=db) == 403
+
+
+# --- Fleet overviews: super_admin sees all, admin/operator/viewer per tenant ---------
+
+@pytest.fixture()
+def fleet(db):
+    from database import CaptureAccessLog, DeviceInventory, SshTunnelLog
+    for device_id, customer in ((OWN_DEVICE, OWN_CUSTOMER), (FOREIGN_DEVICE, FOREIGN_CUSTOMER)):
+        db.add(DeviceInventory(device_id=device_id, hostname=device_id.lower()))
+        db.add(SshTunnelLog(device_id=device_id, event="connected", remote_port=40000))
+        db.add(CaptureAccessLog(device_id=device_id, filename="x.jpg", customer_id=customer))
+    db.commit()
+    yield db
+    for model in (DeviceInventory, SshTunnelLog, CaptureAccessLog):
+        db.query(model).filter(model.device_id.in_(DEVICES)).delete(synchronize_session=False)
+    db.commit()
+
+
+def _ids(rows, key="device_id"):
+    return {row[key] for row in rows} & set(DEVICES)
+
+
+def test_update_device_matrix_is_tenant_scoped(fleet):
+    assert _ids(main.list_update_device_matrix(_user=_tenant_admin(), db=fleet)["devices"]) == {OWN_DEVICE}
+    assert _ids(main.list_update_device_matrix(_user=_super_admin(), db=fleet)["devices"]) == set(DEVICES)
+
+
+def test_grc_dashboard_is_tenant_scoped(fleet):
+    assert _ids(main.grc_dashboard(_user=_tenant_admin(), db=fleet)["devices"]) == {OWN_DEVICE}
+    assert _ids(main.grc_dashboard(_user=_super_admin(), db=fleet)["devices"]) == set(DEVICES)
+
+
+def test_ssh_tunnel_active_is_tenant_scoped(fleet, monkeypatch):
+    monkeypatch.setattr(main, "_localhost_tcp_reachable", lambda port: True)
+    assert _ids(main.ssh_tunnel_active(_user=_tenant_admin(), db=fleet)) == {OWN_DEVICE}
+    operator = MagicMock(username="op", role="operator", customer_id=OWN_CUSTOMER)
+    assert _ids(main.ssh_tunnel_active(_user=operator, db=fleet)) == {OWN_DEVICE}
+    assert _ids(main.ssh_tunnel_active(_user=_super_admin(), db=fleet)) == set(DEVICES)
+
+
+def test_update_flow_status_only_lists_own_tenant_targets(fleet, monkeypatch):
+    from database import PendingUpdate
+    update = PendingUpdate(update_type="agent", version="p0-test", status="approved", scope="global")
+    fleet.add(update)
+    fleet.commit()
+    devices = fleet.query(Device).filter(Device.device_id.in_(DEVICES)).all()
+    monkeypatch.setattr(main, "_resolve_update_targets", lambda db, u: list(devices))
+    try:
+        own = main.get_update_flow_status(update.id, _user=_tenant_admin(), db=fleet)
+        everyone = main.get_update_flow_status(update.id, _user=_super_admin(), db=fleet)
+    finally:
+        fleet.delete(update)
+        fleet.commit()
+    assert _ids(own["targets"]) == {OWN_DEVICE}
+    assert _ids(everyone["targets"]) == set(DEVICES)
+
+
+def test_capture_access_log_is_tenant_scoped_for_admins(fleet):
+    from api.capture_access_api import search_capture_access
+
+    def search(user):
+        return search_capture_access(username=None, device_id=None, filename=None, action=None,
+                                     hours=24, limit=500, user=user, db=fleet)
+    assert _ids(search(_tenant_admin())) == {OWN_DEVICE}
+    assert _ids(search(_super_admin())) == set(DEVICES)
+
+
+def _route_role_check(path: str, method: str):
+    for route in main.app.routes:
+        if getattr(route, "path", None) == path and method in getattr(route, "methods", set()):
+            return next(dep.call for dep in route.dependant.dependencies if dep.call.__name__ == "_check")
+    raise AssertionError(f"route not found: {method} {path}")
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/api/admin/key-management"),
+    ("POST", "/api/admin/key-management/migrate-legacy-device-tokens"),
+    ("POST", "/api/admin/key-management/credentials"),
+    ("POST", "/api/admin/key-management/credentials/{credential_id}/revoke"),
+    ("POST", "/api/admin/key-management/credentials/{credential_id}/request-signature"),
+    ("POST", "/api/admin/key-management/cleanup-stale-credentials"),
+    ("GET", "/api/ai/ops/snapshot"),
+    ("POST", "/api/ai/ops/analyze"),
+    ("POST", "/api/ai/ops/query"),
+])
+def test_platform_surfaces_are_super_admin_only(db, method, path):
+    check = _route_role_check(path, method)
+    for user in (_tenant_admin(), _platform_admin()):
+        with pytest.raises(HTTPException) as exc:
+            check(request=None, user=user, db=db)
+        assert exc.value.status_code == 403
