@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-10 11:15 — fra Claude til Peter/næste session: LAB-start målt på lab.64 → kameraets warm-up kørte 3 gange (30 s)
+
+- **lab.64 live** (#334 Edge2 10:53:34, #335 Edge1 10:55:36); #291 deployet — én wake pr. ændring nu.
+- **Måling Edge1 (Peter: "det tager dog stadig en del tid"):** LAB til 10:55:59 → wake 10:56:01 (2 s) → sync færdig 10:56:06 → LAB-løkke 10:56:08 (**ingen 65 s søvn længere — #292 virker**) → relæ ON 10:56:09 "Waiting 10s" → **kamera forbundet 10:56:39** (30 s) → parametre sendt 10:56:51.
+- **Rodårsag:** warm-up 3×10 s: `CameraRelay.power_on()` venter selv `relay_on_seconds_before`; LAB-service-op'en `camera.power.acquire` (`power_acquire` i agent) ventede igen; LAB-løkkens attempt 0 kaldte power_on (no-op, allerede tændt) og ventede **igen**. Normal capture venter kun én gang (relæet).
+- **Rettet (ny PR):** de ekstra `time.sleep(warmup)` fjernet i `power_acquire`, LAB-løkkens attempt og power-cycle-grenen (relæet venter selv når det faktisk tænder). Forventet LAB-klar ≈ 2 s wake + ~5 s sync + 10 s warm-up + forbindelse ≈ 20 s (fra ~40 s). Test: `test_lab_camera_start_waits_for_warm_up_only_once` + eksisterende LAB-state-machine grønne; CI-ækvivalent 1712 passed. → lab.65.
+- **Mulig næste forbedring (ikke lavet):** ved wake kører agenten en fuld sync (~4–5 s inkl. diagnostik); et let config-pull ved wake ville spare et par sekunder.
+
 ### Handover 2026-10-10 11:00 — fra Claude til Peter/næste session: LAB ventede stadig længe trods 2 s wake → agenten sov resten af sit interval
 
 - **Peter:** "LAB står stadig og venter LÆNGE".
