@@ -8,6 +8,8 @@ import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint
 import { browserSupportsWebAuthnAutofill, startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
+const PASSKEY_SLOW_MS = 10_000
+
 export default function LoginPage() {
   const { login, verifyMfa, confirmMfaSetup, acceptSessionUser } = useAuth()
   const navigate  = useNavigate()
@@ -26,6 +28,11 @@ export default function LoginPage() {
   const [mfaQr,       setMfaQr]       = useState('')
   const [mfaSecret,   setMfaSecret]   = useState('')
   const [remember,     setRemember]     = useState(false)
+  // Touch ID has not answered within PASSKEY_SLOW_MS (Peter 2026-10-11: login
+  // "SKAL bare virke ALTID"). Never leave the user waiting: say what is going
+  // on and offer the password path at once instead of after the 75 s deadline.
+  const [passkeySlow, setPasskeySlow] = useState(false)
+  const passkeyCancelledByUser = useRef(false)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
 
@@ -147,7 +154,9 @@ export default function LoginPage() {
   async function handleWebAuthn() {
     const typedUsername = currentUsername()
     if (!typedUsername) { setError('Indtast brugernavn først'); return }
-    setError(null); setLoading(true)
+    setError(null); setLoading(true); setPasskeySlow(false)
+    passkeyCancelledByUser.current = false
+    const slowTimer = setTimeout(() => setPasskeySlow(true), PASSKEY_SLOW_MS)
     // One deadline for the whole ceremony (login-begin, authenticator,
     // login-complete): never leave the button spinning if any step stalls —
     // seen with Safari 27 / macOS 27 never showing the sheet (2026-09-25).
@@ -190,13 +199,26 @@ export default function LoginPage() {
       acceptSessionUser(u)
       navigate(from, { replace: true })
     } catch (e: any) {
-      setError(e?.name === 'NotAllowedError'
-        ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne.'
-        : (e.message ?? 'WebAuthn fejlede'))
+      if (!passkeyCancelledByUser.current) {
+        setError(e?.name === 'NotAllowedError'
+          ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne.'
+          : (e.message ?? 'WebAuthn fejlede'))
+      }
     } finally {
       clearTimeout(timer)
+      clearTimeout(slowTimer)
+      setPasskeySlow(false)
       setLoading(false)
     }
+  }
+
+  function switchToPassword() {
+    passkeyCancelledByUser.current = true
+    webauthnFlow.current?.abort()
+    WebAuthnAbortService.cancelCeremony()
+    setPasskeySlow(false)
+    setLoading(false)
+    setTimeout(() => (currentUsername() ? passwordRef : usernameRef).current?.focus(), 0)
   }
 
   return (
@@ -314,6 +336,19 @@ export default function LoginPage() {
                 className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-400" />
               <span className="text-sm text-gray-500">Husk denne enhed i 30 dage</span>
             </label>
+          )}
+
+          {passkeySlow && (
+            <div role="status" className="bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2.5 rounded-lg space-y-2">
+              <p>
+                Touch ID / Windows Hello svarer ikke. Det sker typisk, når computeren holder en kort pause
+                efter flere forsøg. Log ind med adgangskode i stedet, eller vent et par minutter og prøv én gang.
+              </p>
+              <button type="button" onClick={switchToPassword}
+                className="text-sm font-medium text-amber-900 underline underline-offset-2">
+                Brug adgangskode i stedet
+              </button>
+            </div>
           )}
 
           {/* WebAuthn / biometrisk login */}

@@ -17,7 +17,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        // TIMELAPSE_API_PROXY: the browser login test (e2e/) runs its own Headend.
+        target: process.env.TIMELAPSE_API_PROXY || 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

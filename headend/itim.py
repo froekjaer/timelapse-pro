@@ -562,6 +562,42 @@ _OPS = {
 }
 
 
+def _probe_login(db: Session) -> None:
+    """Login end to end (2026-10-11): TLS + login page + passkey AutoFill
+    start through local nginx, and live login telemetry. See
+    services/login_health.py. The generic "Service nede" rule (service, up==0)
+    alerts on a failed probe; the login rules below cover the rest."""
+    from services import login_health
+
+    base_url = _setting(db, "base_url", os.getenv("BASE_URL", "")).strip()
+    metrics: dict[str, float] = dict(login_health.TELEMETRY.snapshot())
+    failed = None
+    if base_url:
+        result = login_health.probe_login(base_url)
+        metrics.update(result["metrics"])
+        failed = result["failed_step"]
+        try:
+            from services.webauthn_origin import _default_rp_id_for_origin
+            metrics["passkey_rp_mismatch_users"] = float(
+                login_health.passkey_rp_mismatch_users(db, _default_rp_id_for_origin(base_url)))
+        except Exception as exc:
+            log.debug("ITIM login rp-check fejl: %s", exc)
+    record_metrics(db, "svc:login", "service", metrics, display_name="Login")
+    if failed:
+        state, summary = "critical", f"Login fejler: {failed}"
+    elif metrics.get("auth_5xx_30m", 0) > 0:
+        state = "critical"
+        summary = f"Serverfejl ved login: {', '.join(login_health.TELEMETRY.last_errors())}"
+    elif metrics.get("passkey_abandoned_30m", 0) >= 3:
+        state, summary = "warning", "Flere passkey-logins startet men ikke gennemført (30 min)"
+    elif 0 < metrics.get("cert_days_left", 999) < 14:
+        state, summary = "warning", f"TLS-certifikat udløber om {metrics['cert_days_left']:.0f} dage"
+    else:
+        state, summary = "ok", "Login virker"
+    set_health(db, "svc:login", "service", state, summary,
+               {k: round(v, 1) for k, v in metrics.items()}, display_name="Login")
+
+
 def _latest_value(db: Session, target_id: int, metric: str) -> Optional[float]:
     row = db.execute(text("""
         SELECT value FROM itim_metric_samples
@@ -730,6 +766,11 @@ _DEFAULT_RULES = [
     ("Edge disk kritisk fuld",        "edge",   None,            "ssd_used_pct",   ">",  95, 0,   "critical"),
     ("Billedfejl-rate høj",           "image_qa", "image_qa:all","unusable_rate",  ">",  20, 0,   "warning"),
     ("AI batch-jobs fejlet",          "pipeline","pipeline:ai",  "batch_jobs_failed_24h", ">", 0, 0, "warning"),
+    # Login (2026-10-11). A failed end-to-end probe (up==0) is covered by
+    # "Service nede" above; these catch what real browsers hit in between.
+    ("Login: serverfejl",             "service", "svc:login",    "auth_5xx_30m",   ">",  0, 0,   "critical"),
+    ("Login: passkey ikke gennemført", "service", "svc:login",   "passkey_abandoned_30m", ">=", 3, 0, "warning"),
+    ("Login: certifikat udløber",     "service", "svc:login",    "cert_days_left", "<",  14, 0,   "warning"),
 ]
 
 
@@ -749,7 +790,7 @@ def seed_defaults(db: Session) -> None:
 def run_collection_cycle(db: Session) -> None:
     """Én indsamlingsrunde — hvert probe er isoleret så én fejl ikke vælter resten."""
     for probe in (_probe_host_metrics, _probe_services, _probe_data_fast,
-                  _probe_edge_from_diagnostics, _probe_image_qa, _probe_ai_pipeline):
+                  _probe_edge_from_diagnostics, _probe_image_qa, _probe_ai_pipeline, _probe_login):
         try:
             probe(db)
         except Exception as exc:

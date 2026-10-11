@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-10-11 — fra Claude til Peter/næste session: login skal virke altid — overvågning, Postgres-CI, browsertest, hurtig fallback
+
+- **Peter:** "Det er den første oplevelse en bruger har, og det SKAL bare virke ALTID!!!" — punkt 2–5 bestilt.
+- **#300 (AutoFill 500):** merget og deployet af Peter 2026-10-11 ~18:21; verificeret live: kørende kode `2f7b8e29`, AutoFill `login-begin` svarer 200 (før 500), nøgle 88 tegn.
+- **Overvågning (punkt 2):** ny ITIM-probe `svc:login` (`services/login_health.py`, kaldt fra `itim.run_collection_cycle`) — hvert minut TLS (certifikat verificeret, dage tilbage) + `/login` + AutoFill-start gennem lokal nginx; middleware tæller 5xx på `/api/auth/*` og passkey-forsøg uden `login-complete` (ingen brugernavne/IP'er gemmes). Alarmer via eksisterende ITIM → mail (aktiv i prod): "Service nede" (probe fejler 60 s), "Login: serverfejl" (straks), "Login: passkey ikke gennemført" (≥3/30 min), "Login: certifikat udløber" (<14 dage). Probe kørt mod prod: OK, 44 ms, cert 55 dage.
+- **Postgres i CI (punkt 3):** ny job kører HELE suiten på Postgres 16 (UTF-8) — lokalt 1736 passed. Ny `tests/test_auth_login_real_database.py` (passkey AutoFill + brugernavn ende-til-ende via HTTP): fejler på Postgres med præcis produktionsfejlen, når #300 rulles tilbage.
+- **Browsertest (punkt 4):** `timelapse-ui/e2e/` (Playwright, Chromium virtuel autentifikator som Touch ID) mod rigtig login-side + Headend + Postgres: AutoFill-start 200, AutoFill-login, knap-login, adgangskode, "Touch ID svarer aldrig". 5/5 to gange lokalt; fanger #300-fejlen. Deploy (`deploy-signal`, `deploy-macmini`) kræver nu begge nye jobs grønne.
+- **Login-siden (punkt 5):** svarer Touch ID ikke inden 10 s, vises forklaring + "Brug adgangskode i stedet" (afbryder ceremonien, fokus på adgangskode) — før ventede siden 75 s med alle knapper låst.
+- **Status:** merged? NEJ. Deployet? NEJ.
+
 ### Handover 2026-10-11 — fra Claude til Peter/næste session: passkey-AutoFill gav altid 500 i produktion
 
 - **Peter:** "nu fejler login igen med touchId" (Safari, 2026-10-11 18:05).

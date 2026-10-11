@@ -203,7 +203,9 @@ app = FastAPI(
     version     = "1.0.0",
 )
 from services.navigation_timing import NavigationTimingMiddleware
+from services.login_health import LoginTelemetryMiddleware
 app.add_middleware(NavigationTimingMiddleware, engine=engine)
+app.add_middleware(LoginTelemetryMiddleware)   # login 5xx / unfinished passkey → ITIM svc:login
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
