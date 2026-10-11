@@ -37,6 +37,7 @@
 - **Postgres i CI (punkt 3):** ny job kører HELE suiten på Postgres 16 (UTF-8) — lokalt 1736 passed. Ny `tests/test_auth_login_real_database.py` (passkey AutoFill + brugernavn ende-til-ende via HTTP): fejler på Postgres med præcis produktionsfejlen, når #300 rulles tilbage.
 - **Browsertest (punkt 4):** `timelapse-ui/e2e/` (Playwright, Chromium virtuel autentifikator som Touch ID) mod rigtig login-side + Headend + Postgres: AutoFill-start 200, AutoFill-login, knap-login, adgangskode, "Touch ID svarer aldrig". 5/5 to gange lokalt; fanger #300-fejlen. Deploy (`deploy-signal`, `deploy-macmini`) kræver nu begge nye jobs grønne.
 - **Login-siden (punkt 5):** svarer Touch ID ikke inden 10 s, vises forklaring + "Brug adgangskode i stedet" (afbryder ceremonien, fokus på adgangskode) — før ventede siden 75 s med alle knapper låst.
+- **Codex-review (5 fund) adresseret:** AutoFill-begin ved sidevisning tælles ikke længere som passkey-forsøg (kun begin med brugernavn); nginx-access-loggen indgår, så nginx' egne 502/503/504 og rate-limit 429 på `/api/auth/` også alarmerer (kontrolleret mod prod-log: finder netop de tre 500 fra 10/10 og 11/10); login-regler har eksplicit `for_seconds=60` (generisk 0→60 i `evaluate_alerts` er bevidst ikke ændret — det ville ændre eksisterende Edge-/disk-alarmer); deterministisk sign-counter + én worker i browsertesten; sporet registreret i `PAKKE_SPOR_REGISTER.md`.
 - **Status:** merged? NEJ. Deployet? NEJ.
 
 ### Handover 2026-10-11 — fra Claude til Peter/næste session: passkey-AutoFill gav altid 500 i produktion

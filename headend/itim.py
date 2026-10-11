@@ -571,6 +571,12 @@ def _probe_login(db: Session) -> None:
 
     base_url = _setting(db, "base_url", os.getenv("BASE_URL", "")).strip()
     metrics: dict[str, float] = dict(login_health.TELEMETRY.snapshot())
+    # nginx-side failures (502/503/504, rate limiting) never reach the app;
+    # the access log sees everything browsers got, app errors included.
+    nginx_errors = login_health.nginx_auth_errors()
+    if nginx_errors is not None:
+        metrics["auth_errors_nginx_30m"] = float(nginx_errors)
+        metrics["auth_5xx_30m"] = max(metrics["auth_5xx_30m"], float(nginx_errors))
     failed = None
     if base_url:
         result = login_health.probe_login(base_url)
@@ -587,7 +593,8 @@ def _probe_login(db: Session) -> None:
         state, summary = "critical", f"Login fejler: {failed}"
     elif metrics.get("auth_5xx_30m", 0) > 0:
         state = "critical"
-        summary = f"Serverfejl ved login: {', '.join(login_health.TELEMETRY.last_errors())}"
+        summary = (f"Fejl ved login (30 min): {metrics['auth_5xx_30m']:.0f} — "
+                   f"{', '.join(login_health.TELEMETRY.last_errors()) or 'se nginx-log'}")
     elif metrics.get("passkey_abandoned_30m", 0) >= 3:
         state, summary = "warning", "Flere passkey-logins startet men ikke gennemført (30 min)"
     elif 0 < metrics.get("cert_days_left", 999) < 14:
@@ -768,9 +775,11 @@ _DEFAULT_RULES = [
     ("AI batch-jobs fejlet",          "pipeline","pipeline:ai",  "batch_jobs_failed_24h", ">", 0, 0, "warning"),
     # Login (2026-10-11). A failed end-to-end probe (up==0) is covered by
     # "Service nede" above; these catch what real browsers hit in between.
-    ("Login: serverfejl",             "service", "svc:login",    "auth_5xx_30m",   ">",  0, 0,   "critical"),
-    ("Login: passkey ikke gennemført", "service", "svc:login",   "passkey_abandoned_30m", ">=", 3, 0, "warning"),
-    ("Login: certifikat udløber",     "service", "svc:login",    "cert_days_left", "<",  14, 0,   "warning"),
+    # for_s=60 is explicit: evaluate_alerts() treats 0 as 60 anyway, so with
+    # the 60 s collector an alert goes out within about two minutes.
+    ("Login: serverfejl",             "service", "svc:login",    "auth_5xx_30m",   ">",  0, 60,  "critical"),
+    ("Login: passkey ikke gennemført", "service", "svc:login",   "passkey_abandoned_30m", ">=", 3, 60, "warning"),
+    ("Login: certifikat udløber",     "service", "svc:login",    "cert_days_left", "<",  14, 60,  "warning"),
 ]
 
 

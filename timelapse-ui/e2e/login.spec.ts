@@ -10,6 +10,9 @@ interface LoginUser {
 }
 const user = (): LoginUser => JSON.parse(fs.readFileSync(LOGIN_USER_FILE, 'utf8'))
 
+let signCounter = 0
+const nextSignCount = () => (signCounter += 1000)
+
 async function addTouchId(page: Page, { responds = true } = {}) {
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('WebAuthn.enable')
@@ -27,8 +30,9 @@ async function addTouchId(page: Page, { responds = true } = {}) {
     credential: {
       credentialId: u.credentialId, isResidentCredential: true, rpId: u.rpId,
       // Each test gets a fresh virtual authenticator for the same seeded key;
-      // a rising counter keeps the server's clone detection satisfied.
-      privateKey: u.privateKey, userHandle: u.userHandle, signCount: Math.floor(Date.now() / 1000),
+      // a strictly rising counter keeps the server's clone detection satisfied
+      // (deterministic: not tied to the wall clock — Codex review on #301).
+      privateKey: u.privateKey, userHandle: u.userHandle, signCount: nextSignCount(),
     },
   })
 }

@@ -33,11 +33,20 @@ def test_server_errors_are_counted_and_age_out():
     assert t.snapshot(now=1000 + lh.WINDOW_S + 1)["auth_5xx_30m"] == 0
 
 
-def _run_middleware(app, path, headers=()):
+def test_autofill_page_load_begin_is_not_an_attempt():
+    # Codex review on #301: every page load sends the usernameless begin;
+    # only the explicit (username + button) begin is a passkey attempt.
+    t = lh._Telemetry()
+    t.record(lh._BEGIN, 200, "a", now=1000, explicit_begin=False)
+    snap = t.snapshot(now=1000 + lh.ABANDON_AFTER_S + 1)
+    assert snap["passkey_abandoned_30m"] == 0 and snap["passkey_begin_30m"] == 0
+
+
+def _run_middleware(app, path, headers=(), body=b""):
     sent = []
 
     async def receive():
-        return {"type": "http.request", "body": b""}
+        return {"type": "http.request", "body": body}
 
     async def send(message):
         sent.append(message)
@@ -75,6 +84,40 @@ def test_middleware_ignores_probe_requests_and_other_paths(monkeypatch):
     _run_middleware(failing_app, lh._BEGIN)
     assert t.snapshot()["auth_5xx_30m"] == 1
 
+
+def test_middleware_tells_autofill_from_button_begin(monkeypatch):
+    t = lh._Telemetry()
+    monkeypatch.setattr(lh, "TELEMETRY", t)
+
+    async def ok_app(scope, receive, send):
+        await receive()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    _run_middleware(ok_app, lh._BEGIN, body=b"{}")
+    assert t.snapshot()["passkey_begin_30m"] == 0
+    _run_middleware(ok_app, lh._BEGIN, body=b'{"username": "peter"}')
+    assert t.snapshot()["passkey_begin_30m"] == 1
+
+
+def test_nginx_log_counts_auth_5xx_and_429_but_not_probe_or_other_paths(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 10, 11, 18, 30, tzinfo=timezone(timedelta(hours=2)))
+    def line(minutes_ago, path, status, ua="Safari"):
+        t = (now - timedelta(minutes=minutes_ago)).strftime("%d/%b/%Y:%H:%M:%S %z")
+        return f'1.2.3.4 - - [{t}] "POST {path} HTTP/2.0" {status} 21 rt=0.1 "-" "{ua}"'
+    log = tmp_path / "access.log"
+    log.write_text("\n".join([
+        line(1, "/api/auth/webauthn/login-begin", 500),
+        line(2, "/api/auth/login", 503),
+        line(3, "/api/auth/login", 429),
+        line(4, "/api/auth/webauthn/login-begin", 200),
+        line(5, "/api/devices", 500),
+        line(6, "/api/auth/webauthn/login-begin", 500, ua="TimeLapse-login-probe"),
+        line(45, "/api/auth/webauthn/login-begin", 500),
+    ]) + "\n")
+    assert lh.nginx_auth_errors(str(log), now=now.timestamp()) == 3
+    assert lh.nginx_auth_errors(str(tmp_path / "missing.log")) is None
 
 # ── end-to-end probe against a local HTTP server ────────────────────────────────
 

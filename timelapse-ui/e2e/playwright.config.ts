@@ -16,6 +16,9 @@ const headendDir = path.resolve(import.meta.dirname, '../../headend')
 export default defineConfig({
   testDir: '.',
   timeout: 60_000,
+  // One worker: the tests share one seeded passkey whose sign counter must rise.
+  workers: 1,
+  fullyParallel: false,
   retries: 0,
   reporter: [['list']],
   globalSetup: './global-setup.ts',

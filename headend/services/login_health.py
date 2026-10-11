@@ -13,16 +13,24 @@ alert rules, e-mail notification and ITIM dashboard apply:
    Postgres). No username-bound call is made: that would replace a real
    user's pending challenge.
 2. LoginTelemetryMiddleware: counts what real browsers experience — any 5xx
-   from /api/auth/*, and passkey ceremonies that were started (login-begin
-   200) but never completed (no login-complete 200 from the same client
-   within ABANDON_AFTER_S). Probe requests are excluded. In memory only; no
-   usernames or IP addresses leave this module (client key is a short hash).
+   from /api/auth/*, and passkey ceremonies the user explicitly started (the
+   username + Touch ID button: login-begin with a username) that never
+   completed (no login-complete 200 from the same client within
+   ABANDON_AFTER_S). The usernameless AutoFill begin fires on every page
+   load before the user picks anything, so it is not an attempt and is not
+   counted. Probe requests are excluded. In memory only; no usernames or IP
+   addresses leave this module (client key is a short hash).
+3. nginx_auth_errors(): failures nginx itself returns (502/503/504, rate
+   limiting) never reach the app or the middleware; they are read from the
+   nginx access log so the 5xx alert covers what browsers actually saw.
 """
 from __future__ import annotations
 
 import hashlib
 import http.client
 import json
+import os
+import re
 import socket
 import ssl
 import threading
@@ -49,13 +57,14 @@ class _Telemetry:
         self.abandoned: deque[float] = deque(maxlen=2000)
         self.begun: deque[float] = deque(maxlen=2000)
 
-    def record(self, path: str, status: int, client: str, now: float | None = None) -> None:
+    def record(self, path: str, status: int, client: str, now: float | None = None,
+               explicit_begin: bool = True) -> None:
         now = time.time() if now is None else now
         with self._lock:
             self._expire(now)
             if status >= 500:
                 self.errors.append((now, path, status))
-            if path == _BEGIN and 200 <= status < 300:
+            if path == _BEGIN and explicit_begin and 200 <= status < 300:
                 self.begun.append(now)
                 self.begins[client] = now
             elif path == _COMPLETE and 200 <= status < 300:
@@ -109,6 +118,13 @@ class LoginTelemetryMiddleware:
         if any(k.lower() == PROBE_HEADER.encode() for k, _v in scope.get("headers") or []):
             return await self.app(scope, receive, send)
         status = {"code": 500}
+        body = bytearray()
+
+        async def receive_wrapper():
+            message = await receive()
+            if path == _BEGIN and message.get("type") == "http.request" and len(body) < 4096:
+                body.extend(message.get("body", b"")[:4096])
+            return message
 
         async def send_wrapper(message):
             if message.get("type") == "http.response.start":
@@ -116,12 +132,58 @@ class LoginTelemetryMiddleware:
             await send(message)
 
         try:
-            await self.app(scope, receive, send_wrapper)
+            await self.app(scope, receive_wrapper, send_wrapper)
         finally:
             try:
-                TELEMETRY.record(path, status["code"], _client_key(scope))
+                TELEMETRY.record(path, status["code"], _client_key(scope),
+                                 explicit_begin=_names_a_user(bytes(body)))
             except Exception:
                 pass
+
+
+def _names_a_user(body: bytes) -> bool:
+    """login-begin with a username = the user pressed the Touch ID button."""
+    try:
+        return bool(str(json.loads(body or b"{}").get("username") or "").strip())
+    except (ValueError, AttributeError):
+        return False
+
+
+# ── nginx-side failures ─────────────────────────────────────────────────────
+
+NGINX_ACCESS_LOG = os.getenv("TIMELAPSE_NGINX_ACCESS_LOG", "/opt/homebrew/var/log/nginx-timelapse-access.log")
+_NGINX_LINE = re.compile(r'\[(?P<t>[^\]]+)\] "(?P<m>[A-Z]+) (?P<p>\S+)[^"]*" (?P<s>\d{3})')
+
+
+def nginx_auth_errors(log_path: str = NGINX_ACCESS_LOG, now: float | None = None,
+                      window_s: int = WINDOW_S, tail_bytes: int = 4_000_000) -> int | None:
+    """/api/auth requests answered 5xx or 429 by nginx or the app in the last
+    window, excluding the probe. None when the log cannot be read."""
+    now = time.time() if now is None else now
+    try:
+        with open(log_path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - tail_bytes))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    count = 0
+    for line in lines:
+        if "/api/auth/" not in line or "TimeLapse-login-probe" in line:
+            continue
+        m = _NGINX_LINE.search(line)
+        if not m or not m.group("p").startswith("/api/auth/"):
+            continue
+        status = int(m.group("s"))
+        if status < 500 and status != 429:
+            continue
+        try:
+            ts = datetime.strptime(m.group("t"), "%d/%b/%Y:%H:%M:%S %z").timestamp()
+        except ValueError:
+            continue
+        if now - ts <= window_s:
+            count += 1
+    return count
 
 
 # ── End-to-end probe ────────────────────────────────────────────────────────

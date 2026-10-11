@@ -18,6 +18,14 @@ liste for overlap; efter merge, ret listen til.
 
 ## Åbne spor — fulde felter (§14.6)
 
+### #301 login-pålidelighed — `claude/login-reliability-20261011`
+
+- **Mandat/session:** Claude, Peter 2026-10-11 ("Ja, gå i gang med punkt 2–5" efter "login … SKAL bare virke ALTID").
+- **Formål/scope:** ITIM-probe `svc:login` + login-telemetri (`headend/services/login_health.py`, middleware i `main.py`, regler i `itim.py`); hele pytest-suiten på Postgres i CI; Playwright-browsertest (`timelapse-ui/e2e/`, ny dev-afhængighed `@playwright/test`); 10 s fallback på login-siden. Deploy-jobs kræver nu de to nye CI-jobs.
+- **Base/head:** base `main@2f7b8e29` (inkl. #300), head = PR #301.
+- **Overlap/restdisposition:** rører `headend/main.py` (én middleware-linje), `itim.py`, `LoginPage.tsx`, `ci.yml`. Ingen overlap med #297/#298/#299 (sikkerhed) ud over `main.py`-linjebudgettet (ratchet: 17550). Genbruger ITIM-alarmer/mail i stedet for en parallel overvågning. Rest: ingen.
+- **Næste handling:** uafhængig review (Codex-review adresseret); merge + deploy; bekræft `svc:login` i ITIM efter deploy.
+
 Disse spor ændrer kode, sikkerhed eller den fælles governance-tekst og er derfor
 **fulde spor** efter §14.6 — ikke lette spor. #229 er lukket 2026-09-13 (se nederst
 i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet frisk
