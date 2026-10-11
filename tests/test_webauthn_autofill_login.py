@@ -144,3 +144,19 @@ def test_main_and_login_page_wiring():
     for f in ("timelapse-ui/src/pages/UsersPage.tsx", "timelapse-ui/src/components/SshTerminalModal.tsx"):
         src = (ROOT / f).read_text(encoding="utf-8")
         assert "useAbortPasskeyOnLeave()" in src and "withPasskeyDeadline(start" in src
+
+
+def test_challenge_key_fits_the_production_settings_column(env):
+    # 2026-10-11: prefix + raw challenge was 110 chars; Postgres refused it
+    # (settings.key is VARCHAR(100)) and every AutoFill login-begin was a 500.
+    # SQLite does not enforce the length, so assert it explicitly.
+    limit = None
+    for line in (ROOT / "headend" / "database.py").read_text().splitlines():
+        if line.strip().startswith("key ") and "String(" in line and limit is None and "unique=True" in line:
+            limit = int(line.split("String(")[1].split(")")[0])
+    assert limit == 100
+    db, _ = env
+    for _ in range(5):
+        af.begin(db, Settings, RP_ID)
+    keys = [row.key for row in db.query(Settings).filter(Settings.key.like(f"{af.CHALLENGE_PREFIX}%")).all()]
+    assert keys and max(len(k) for k in keys) <= limit

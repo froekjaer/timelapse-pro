@@ -16,12 +16,21 @@ password on the Mac) is required for this path.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 
 CHALLENGE_PREFIX = "webauthn_anon_challenge_"
 CHALLENGE_TTL_S = 300
 MAX_OPEN_CHALLENGES = 200
+
+
+def _challenge_key(challenge: str) -> str:
+    """settings.key is VARCHAR(100). A 64-byte challenge is 86 base64url
+    characters, so prefix + challenge (110) was rejected by Postgres and every
+    AutoFill login-begin returned 500 in production (2026-10-11; SQLite tests
+    don't enforce the length). The SHA-256 hex digest keeps the key at 88."""
+    return CHALLENGE_PREFIX + hashlib.sha256(challenge.encode("ascii")).hexdigest()
 
 
 def _b64url_decode(value: str) -> bytes:
@@ -58,7 +67,7 @@ def begin(db, settings_model, rp_id: str, now: float | None = None) -> dict:
         user_verification=UserVerificationRequirement.REQUIRED,
     )
     opts = json.loads(webauthn.options_to_json(options))
-    db.add(settings_model(key=CHALLENGE_PREFIX + opts["challenge"],
+    db.add(settings_model(key=_challenge_key(opts["challenge"]),
                           value=json.dumps({"challenge": opts["challenge"], "created": now})))
     db.commit()
     return opts
@@ -77,7 +86,7 @@ def resolve(db, payload: dict, settings_model, credential_model, user_model, now
         credential_id = _b64url_decode(str(payload.get("rawId") or ""))
     except (KeyError, TypeError, ValueError):
         raise ValueError("Ugyldigt passkey-svar")
-    row = db.query(settings_model).filter_by(key=CHALLENGE_PREFIX + challenge).first()
+    row = db.query(settings_model).filter_by(key=_challenge_key(challenge)).first()
     if row is None:
         raise ValueError("Ingen aktiv udfordring")
     if now - float(json.loads(row.value).get("created", 0)) > CHALLENGE_TTL_S:
