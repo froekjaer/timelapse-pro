@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-11 — fra Claude til Peter/næste session: passkey-AutoFill gav altid 500 i produktion
+
+- **Peter:** "nu fejler login igen med touchId" (Safari, 2026-10-11 18:05).
+- **Fundet (nginx + headend-log):** hver usernameless `login-begin` (AutoFill, #288) gav 500 siden udrulning: `StringDataRightTruncation` — nøglen `webauthn_anon_challenge_<86 tegn>` er 110 tegn, `settings.key` er VARCHAR(100). SQLite-testene håndhæver ikke længden. Samme 500 ses på iPhone 2026-10-10 10:08.
+- **Rettet:** nøglen er nu præfiks + SHA-256 af udfordringen (88 tegn). Ny test fejler uden rettelsen.
+- **Stadig åbent:** det modale Touch ID-trin efter password (`login-begin` 200, ingen `login-complete` 18:05:54 og 18:06:14) — server-data uændret siden vellykket Safari-login 2026-10-10 08:19; mønstret svarer til den hængende macOS-helper (se memory/runbook). Ikke serverfejl.
+- **Status:** merged? NEJ. Deployet? NEJ.
+
 ### Handover 2026-10-10 11:45 — fra Claude til Peter/næste session: LAB-start viser rigtige trin (feedback) i stedet for gættet nedtælling
 
 - **Peter:** "kan du egentlig også lave, så der kommer nogle feedback step, når man har trykket start lab, så man kan se at der sker noget, og hvor langt den er".
