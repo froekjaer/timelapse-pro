@@ -144,7 +144,14 @@ def test_main_and_login_page_wiring():
     # the Touch ID button's request. The login page must never start one.
     assert "useBrowserAutofill" not in page and "browserSupportsWebAuthnAutofill" not in page
     assert 'autoComplete="username webauthn"' not in page
-    assert "PASSKEY_SLOW_MS = 10_000" in page and "Brug adgangskode i stedet" in page
+    # Touch ID is asked inside the click: the challenge is prefetched, and no
+    # await precedes startAuthentication when it was.
+    assert "prefetchPasskeyOptions()" in page and "PREFETCH_MAX_AGE_MS" in page
+    handler = page.split("async function handleWebAuthn()", 1)[1].split("\n  }\n", 1)[0]
+    prefetched_path = handler.split("if (controller.signal.aborted) return", 1)[1]
+    code_before_touch_id = [line for line in prefetched_path.split("withDeadline(startAuthentication(", 1)[0].splitlines()
+                            if not line.strip().startswith("//")]
+    assert not any("await" in line for line in code_before_touch_id)
     for f in ("timelapse-ui/src/pages/UsersPage.tsx", "timelapse-ui/src/components/SshTerminalModal.tsx"):
         src = (ROOT / f).read_text(encoding="utf-8")
         assert "useAbortPasskeyOnLeave()" in src and "withPasskeyDeadline(start" in src

@@ -154,31 +154,46 @@ export default function LoginPage() {
 
   async function handleWebAuthn() {
     setError(null)
-    let options = prefetched.current
-    prefetched.current = null   // a challenge is single use
-    if (!options || Date.now() - options.at > PREFETCH_MAX_AGE_MS) {
-      // Only if the page could not prefetch (e.g. offline when it loaded).
-      await prefetchPasskeyOptions()
-      options = prefetched.current
-      prefetched.current = null
-      if (!options) { setError('Kunne ikke kontakte serveren. Tjek forbindelsen og prøv igen.'); return }
-    }
-    // No await before this call: it must run inside the click.
-    const ceremony = startAuthentication({ optionsJSON: options.options })
-    setLoading(true)
+    // One deadline for the whole ceremony: the button never spins forever if
+    // Safari never shows the sheet (2026-09-25) — the user gets an error.
     const controller = new AbortController()
     webauthnFlow.current = controller
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        WebAuthnAbortService.cancelCeremony()
+        reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen.'))
+      }, 75_000)
+    })
+    deadline.catch(() => {})  // only surfaced through withDeadline()
+    const withDeadline = <T,>(p: Promise<T>) => Promise.race([p, deadline])
+    let options = prefetched.current
+    prefetched.current = null   // a challenge is single use
     try {
+      if (!options || Date.now() - options.at > PREFETCH_MAX_AGE_MS) {
+        // Only if the page could not prefetch (e.g. offline when it loaded).
+        setLoading(true)
+        await withDeadline(prefetchPasskeyOptions())
+        options = prefetched.current
+        prefetched.current = null
+        if (!options) throw new Error('Kunne ikke kontakte serveren. Tjek forbindelsen og prøv igen.')
+      }
+      // Page left meanwhile: never start a ceremony from an abandoned page.
+      if (controller.signal.aborted) return
+      // No await before this call when the challenge was prefetched: it must
+      // run inside the click for Safari to show Touch ID.
+      const ceremony = withDeadline(startAuthentication({ optionsJSON: options.options }))
+      setLoading(true)
       const result = await ceremony
-      const res = await fetch(`${getApiUrl()}/api/auth/webauthn/login-complete`, {
+      const data = await withDeadline(fetch(`${getApiUrl()}/api/auth/webauthn/login-complete`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(result),
         signal: controller.signal,
-      })
-      if (!res.ok) throw new Error('Touch ID-login blev ikke godkendt af serveren. Prøv igen.')
-      const data = await res.json()
-      acceptSessionUser({ username: data.username, role: data.role, customer_id: data.customer_id ?? null })
+      }).then(r => { if (!r.ok) throw new Error('Touch ID-login blev ikke godkendt af serveren. Prøv igen.'); return r.json() }))
+      const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
+      acceptSessionUser(u)
       navigate(from, { replace: true })
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
@@ -188,6 +203,7 @@ export default function LoginPage() {
       }
       prefetchPasskeyOptions()   // ready for the next click
     } finally {
+      clearTimeout(timer)
       setLoading(false)
     }
   }
