@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-10-13 — fra Claude til Peter/næste session: Touch ID-login i Safari — rodårsager rettet
+
+- **Peter:** "Touch-id SKAL virke" / "Du må ikke lave en fall-back løsning for at skjule en dårlig kode."
+- **Ikke den natlige genstart:** Headend genstartede 03:25 på korrekt kode (`2f7b8e29`, #300); alle `login-begin` i dag 200, ingen serverfejl. Sessioner udløber efter 12 t uanset genstart.
+- **Fakta (nginx):** sidste vellykkede Safari-Touch ID 11/10 18:15:21 — mens AutoFill-begin gav 500 (#300 ikke deployet). Fra #300 deploy (11/10 ~18:21) og frem: ingen `login-complete` fra Safari; 13/10 12:45–12:48 seks knaptryk uden resultat.
+- **Rodårsag 1:** med en ventende AutoFill-forespørgsel (conditional mediation, #288) ignorerede Safari knappens forespørgsel; `startAuthentication` afbryder den gamle og kalder `credentials.get` i samme tick (kildekode @simplewebauthn/browser 13.3.0). → AutoFill fjernet fra login-siden (serveren understøtter den stadig).
+- **Rodårsag 2:** knappen ventede på modul-load + `login-begin` før `credentials.get`; Safari kræver kaldet direkte i klikket (forklarer de tavse fejl/cooldown 11/10 også uden AutoFill). → Udfordringen hentes på forhånd (usernameless, fornyes før 5-min TTL); klik kalder Touch ID straks; brugernavn ikke nødvendigt.
+- **Fallback-besked (10 s "brug adgangskode") fjernet** efter Peters krav — fjernes også fra #301.
+- **Verificeret:** Chromium-browsertest (virtuel autentifikator, rigtig side + Headend + Postgres) 5/5 ×3: forhåndshentning uden AutoFill, Touch ID uden brugernavn, intet API-kald før Touch ID ved klik, virker igen efter fejlet forsøg, adgangskode. Python-suite grøn. **Ikke verificeret i rigtig Safari** — kræver Peters Touch ID efter deploy.
+- **Status:** merged? NEJ. Deployet? NEJ.
+
 ### Handover 2026-10-11 — fra Claude til Peter/næste session: passkey-AutoFill gav altid 500 i produktion
 
 - **Peter:** "nu fejler login igen med touchId" (Safari, 2026-10-11 18:05).

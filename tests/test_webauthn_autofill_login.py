@@ -140,7 +140,11 @@ def test_main_and_login_page_wiring():
     assert "db.delete(setting)" in complete
     assert "ResidentKeyRequirement.PREFERRED" in main
     page = (ROOT / "timelapse-ui/src/pages/LoginPage.tsx").read_text(encoding="utf-8")
-    assert 'autoComplete="username webauthn"' in page and "useBrowserAutofill: true" in page
+    # 2026-10-13: a pending AutoFill (conditional) request made Safari ignore
+    # the Touch ID button's request. The login page must never start one.
+    assert "useBrowserAutofill" not in page and "browserSupportsWebAuthnAutofill" not in page
+    assert 'autoComplete="username webauthn"' not in page
+    assert "PASSKEY_SLOW_MS = 10_000" in page and "Brug adgangskode i stedet" in page
     for f in ("timelapse-ui/src/pages/UsersPage.tsx", "timelapse-ui/src/components/SshTerminalModal.tsx"):
         src = (ROOT / f).read_text(encoding="utf-8")
         assert "useAbortPasskeyOnLeave()" in src and "withPasskeyDeadline(start" in src
