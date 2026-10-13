@@ -125,6 +125,20 @@ export default function LoginPage() {
   const prefetched = useRef<{ options: PublicKeyCredentialRequestOptionsJSON; at: number } | null>(null)
   const prefetching = useRef<Promise<void> | null>(null)
 
+  // Browser-side failures never reach the server on their own (2026-10-13:
+  // Safari refused Touch ID without asking macOS). Send the exact error to
+  // the Headend log so it can be read there, not off the screen.
+  function reportPasskeyError(stage: string, e: unknown) {
+    const err = e as { name?: string; message?: string; code?: string } | undefined
+    try {
+      void fetch(`${getApiUrl()}/api/auth/webauthn/client-report`, {
+        method: 'POST', credentials: 'include', keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage, name: err?.name ?? typeof e, message: `${err?.code ? err.code + ': ' : ''}${err?.message ?? String(e)}` }),
+      }).catch(() => {})
+    } catch { /* reporting must never affect login */ }
+  }
+
   function prefetchPasskeyOptions(): Promise<void> {
     if (prefetching.current) return prefetching.current
     prefetching.current = fetch(`${getApiUrl()}/api/auth/webauthn/login-begin`, {
@@ -135,7 +149,7 @@ export default function LoginPage() {
         if (!r.ok) throw new Error(`login-begin ${r.status}`)
         prefetched.current = { options: await r.json(), at: Date.now() }
       })
-      .catch(() => { prefetched.current = null })
+      .catch(e => { prefetched.current = null; reportPasskeyError('prefetch', e) })
       .finally(() => { prefetching.current = null })
     return prefetching.current
   }
@@ -196,6 +210,7 @@ export default function LoginPage() {
       acceptSessionUser(u)
       navigate(from, { replace: true })
     } catch (e: any) {
+      reportPasskeyError('touch-id', e)
       if (e?.name !== 'AbortError') {
         setError(e?.name === 'NotAllowedError'
           ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne.'
