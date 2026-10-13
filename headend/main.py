@@ -11740,6 +11740,8 @@ def list_timelapse_jobs(_user=require_role("admin")):
 
 # ── CMDB ──────────────────────────────────────────────────────────────────
 app.include_router(import_router, prefix="/api/import", dependencies=[require_role("admin")])
+from api.login_client_report_api import router as login_client_report_router
+app.include_router(login_client_report_router)   # browser-side passkey errors → Headend log
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(edge_sync_router, prefix="/api/edge")
