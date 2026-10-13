@@ -5,10 +5,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
-import { browserSupportsWebAuthnAutofill, startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
+import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
+import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/browser'
+import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
-
-const PASSKEY_SLOW_MS = 10_000
 
 export default function LoginPage() {
   const { login, verifyMfa, confirmMfaSetup, acceptSessionUser } = useAuth()
@@ -28,11 +28,6 @@ export default function LoginPage() {
   const [mfaQr,       setMfaQr]       = useState('')
   const [mfaSecret,   setMfaSecret]   = useState('')
   const [remember,     setRemember]     = useState(false)
-  // Touch ID has not answered within PASSKEY_SLOW_MS (Peter 2026-10-11: login
-  // "SKAL bare virke ALTID"). Never leave the user waiting: say what is going
-  // on and offer the password path at once instead of after the 75 s deadline.
-  const [passkeySlow, setPasskeySlow] = useState(false)
-  const passkeyCancelledByUser = useRef(false)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
 
@@ -113,53 +108,54 @@ export default function LoginPage() {
     return () => { window.removeEventListener('pagehide', abort); abort() }
   }, [])
 
-  // Passkey AutoFill (Peter 2026-10-09: Safari hung after login-begin).
-  // Apple's recommended flow: ask for any passkey for this site without a
-  // username; Safari offers it as a suggestion in the username field and runs
-  // Touch ID from there. With no passkey on this Mac it shows none instead of
-  // waiting. The button below stays as a fallback (it cancels this request).
+  // Touch ID login (Peter 2026-10-13: "Touch-id SKAL virke").
+  //
+  // Two rules, both from what Safari actually did:
+  // 1. One passkey request at a time. Passkey AutoFill (conditional
+  //    mediation, #288) is not used: with an AutoFill request pending, Safari
+  //    ignored the button's request — every Safari button login failed from
+  //    the moment AutoFill worked (#300, 2026-10-11) until it was removed.
+  // 2. Ask for Touch ID immediately in the click. Safari only honours a
+  //    passkey request made in direct response to the user's click; the old
+  //    button first loaded a module and waited for login-begin, and Safari
+  //    then silently dropped the request or put Safari into a cooldown.
+  //    So the challenge is fetched ahead of time (usernameless, Touch ID
+  //    identifies the user) and refreshed before it expires (server TTL 5 min).
+  const PREFETCH_MAX_AGE_MS = 4 * 60_000
+  const prefetched = useRef<{ options: PublicKeyCredentialRequestOptionsJSON; at: number } | null>(null)
+  const prefetching = useRef<Promise<void> | null>(null)
+
+  function prefetchPasskeyOptions(): Promise<void> {
+    if (prefetching.current) return prefetching.current
+    prefetching.current = fetch(`${getApiUrl()}/api/auth/webauthn/login-begin`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    })
+      .then(async r => {
+        if (!r.ok) throw new Error(`login-begin ${r.status}`)
+        prefetched.current = { options: await r.json(), at: Date.now() }
+      })
+      .catch(() => { prefetched.current = null })
+      .finally(() => { prefetching.current = null })
+    return prefetching.current
+  }
+
   useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        if (!(await browserSupportsWebAuthnAutofill())) return
-        const apiUrl = (await import('../api/client')).getApiUrl()
-        const begin = await fetch(`${apiUrl}/api/auth/webauthn/login-begin`, {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
-        })
-        if (!begin.ok || cancelled) return
-        const result = await startAuthentication({ optionsJSON: await begin.json(), useBrowserAutofill: true })
-        if (cancelled) return
-        setLoading(true)
-        const res = await fetch(`${apiUrl}/api/auth/webauthn/login-complete`, {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
-        })
-        if (!res.ok) throw new Error('Passkey-login fejlede — prøv igen eller log ind med adgangskode.')
-        const data = await res.json()
-        acceptSessionUser({ username: data.username, role: data.role, customer_id: data.customer_id ?? null })
-        navigate(from, { replace: true })
-      } catch (e: any) {
-        // AbortError: the button flow or leaving the page took over — expected.
-        if (!cancelled && e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') setError(e?.message ?? 'Passkey-login fejlede')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => { cancelled = true }
+    prefetchPasskeyOptions()
+    const refresh = window.setInterval(prefetchPasskeyOptions, PREFETCH_MAX_AGE_MS - 30_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' &&
+          (!prefetched.current || Date.now() - prefetched.current.at > PREFETCH_MAX_AGE_MS)) prefetchPasskeyOptions()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { window.clearInterval(refresh); document.removeEventListener('visibilitychange', onVisible) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleWebAuthn() {
-    const typedUsername = currentUsername()
-    if (!typedUsername) { setError('Indtast brugernavn først'); return }
-    setError(null); setLoading(true); setPasskeySlow(false)
-    passkeyCancelledByUser.current = false
-    const slowTimer = setTimeout(() => setPasskeySlow(true), PASSKEY_SLOW_MS)
-    // One deadline for the whole ceremony (login-begin, authenticator,
-    // login-complete): never leave the button spinning if any step stalls —
-    // seen with Safari 27 / macOS 27 never showing the sheet (2026-09-25).
+    setError(null)
+    // One deadline for the whole ceremony: the button never spins forever if
+    // Safari never shows the sheet (2026-09-25) — the user gets an error.
     const controller = new AbortController()
     webauthnFlow.current = controller
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -167,58 +163,49 @@ export default function LoginPage() {
       timer = setTimeout(() => {
         controller.abort()
         WebAuthnAbortService.cancelCeremony()
-        reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen, eller log ind med adgangskode.'))
+        reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen.'))
       }, 75_000)
     })
     deadline.catch(() => {})  // only surfaced through withDeadline()
     const withDeadline = <T,>(p: Promise<T>) => Promise.race([p, deadline])
+    let options = prefetched.current
+    prefetched.current = null   // a challenge is single use
     try {
-      const apiUrl = (await import('../api/client')).getApiUrl()
-      const opts = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-begin`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: typedUsername }),
-        signal: controller.signal,
-      }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger på dette domæne'); return r.json() }))
-
-      // Page left while login-begin was in flight: don't start a ceremony
-      // from an abandoned page (it is exactly what the pagehide abort prevents).
+      if (!options || Date.now() - options.at > PREFETCH_MAX_AGE_MS) {
+        // Only if the page could not prefetch (e.g. offline when it loaded).
+        setLoading(true)
+        await withDeadline(prefetchPasskeyOptions())
+        options = prefetched.current
+        prefetched.current = null
+        if (!options) throw new Error('Kunne ikke kontakte serveren. Tjek forbindelsen og prøv igen.')
+      }
+      // Page left meanwhile: never start a ceremony from an abandoned page.
       if (controller.signal.aborted) return
-      const result = await withDeadline(startAuthentication({ optionsJSON: opts }))
-
-      const data = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-complete`, {
-        method: 'POST',
-        credentials: 'include',
+      // No await before this call when the challenge was prefetched: it must
+      // run inside the click for Safari to show Touch ID.
+      const ceremony = withDeadline(startAuthentication({ optionsJSON: options.options }))
+      setLoading(true)
+      const result = await ceremony
+      const data = await withDeadline(fetch(`${getApiUrl()}/api/auth/webauthn/login-complete`, {
+        method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...result, username: typedUsername }),
+        body: JSON.stringify(result),
         signal: controller.signal,
-      }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() }))
-
+      }).then(r => { if (!r.ok) throw new Error('Touch ID-login blev ikke godkendt af serveren. Prøv igen.'); return r.json() }))
       const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
       acceptSessionUser(u)
       navigate(from, { replace: true })
     } catch (e: any) {
-      if (!passkeyCancelledByUser.current) {
+      if (e?.name !== 'AbortError') {
         setError(e?.name === 'NotAllowedError'
           ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne.'
-          : (e.message ?? 'WebAuthn fejlede'))
+          : (e?.message ?? 'Touch ID-login fejlede'))
       }
+      prefetchPasskeyOptions()   // ready for the next click
     } finally {
       clearTimeout(timer)
-      clearTimeout(slowTimer)
-      setPasskeySlow(false)
       setLoading(false)
     }
-  }
-
-  function switchToPassword() {
-    passkeyCancelledByUser.current = true
-    webauthnFlow.current?.abort()
-    WebAuthnAbortService.cancelCeremony()
-    setPasskeySlow(false)
-    setLoading(false)
-    setTimeout(() => (currentUsername() ? passwordRef : usernameRef).current?.focus(), 0)
   }
 
   return (
@@ -252,7 +239,7 @@ export default function LoginPage() {
               <input
                 ref={usernameRef}
                 type="text"
-                autoComplete="username webauthn"
+                autoComplete="username"
                 value={username}
                 onChange={e => { if (mfaRequired || mfaSetupRequired) resetMfaStep(); setUsername(e.target.value) }}
                 onInput={e => setUsername(e.currentTarget.value)}
@@ -336,19 +323,6 @@ export default function LoginPage() {
                 className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-400" />
               <span className="text-sm text-gray-500">Husk denne enhed i 30 dage</span>
             </label>
-          )}
-
-          {passkeySlow && (
-            <div role="status" className="bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2.5 rounded-lg space-y-2">
-              <p>
-                Touch ID / Windows Hello svarer ikke. Det sker typisk, når computeren holder en kort pause
-                efter flere forsøg. Log ind med adgangskode i stedet, eller vent et par minutter og prøv én gang.
-              </p>
-              <button type="button" onClick={switchToPassword}
-                className="text-sm font-medium text-amber-900 underline underline-offset-2">
-                Brug adgangskode i stedet
-              </button>
-            </div>
           )}
 
           {/* WebAuthn / biometrisk login */}

@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-10-13 — fra Claude til Peter/næste session: Touch ID-login i Safari — rodårsager rettet
+
+- **Peter:** "Touch-id SKAL virke" / "Du må ikke lave en fall-back løsning for at skjule en dårlig kode."
+- **Ikke den natlige genstart:** Headend genstartede 03:25 på korrekt kode (`2f7b8e29`, #300); alle `login-begin` i dag 200, ingen serverfejl. Sessioner udløber efter 12 t uanset genstart.
+- **Fakta (nginx):** sidste vellykkede Safari-Touch ID 11/10 18:15:21 — mens AutoFill-begin gav 500 (#300 ikke deployet). Fra #300 deploy (11/10 ~18:21) og frem: ingen `login-complete` fra Safari; 13/10 12:45–12:48 seks knaptryk uden resultat.
+- **Rodårsag 1:** med en ventende AutoFill-forespørgsel (conditional mediation, #288) ignorerede Safari knappens forespørgsel; `startAuthentication` afbryder den gamle og kalder `credentials.get` i samme tick (kildekode @simplewebauthn/browser 13.3.0). → AutoFill fjernet fra login-siden (serveren understøtter den stadig).
+- **Rodårsag 2:** knappen ventede på modul-load + `login-begin` før `credentials.get`; Safari kræver kaldet direkte i klikket (forklarer de tavse fejl/cooldown 11/10 også uden AutoFill). → Udfordringen hentes på forhånd (usernameless, fornyes før 5-min TTL); klik kalder Touch ID straks; brugernavn ikke nødvendigt.
+- **Fallback-besked (10 s "brug adgangskode") fjernet** efter Peters krav — fjernes også fra #301.
+- **Verificeret:** Chromium-browsertest (virtuel autentifikator, rigtig side + Headend + Postgres) 5/5 ×3: forhåndshentning uden AutoFill, Touch ID uden brugernavn, intet API-kald før Touch ID ved klik, virker igen efter fejlet forsøg, adgangskode. Python-suite grøn. **Ikke verificeret i rigtig Safari** — kræver Peters Touch ID efter deploy.
 ### Handover 2026-10-11 — fra Claude til Peter/næste session: login skal virke altid — overvågning, Postgres-CI, browsertest, hurtig fallback
 
 - **Peter:** "Det er den første oplevelse en bruger har, og det SKAL bare virke ALTID!!!" — punkt 2–5 bestilt.
@@ -36,7 +45,7 @@
 - **Overvågning (punkt 2):** ny ITIM-probe `svc:login` (`services/login_health.py`, kaldt fra `itim.run_collection_cycle`) — hvert minut TLS (certifikat verificeret, dage tilbage) + `/login` + AutoFill-start gennem lokal nginx; middleware tæller 5xx på `/api/auth/*` og passkey-forsøg uden `login-complete` (ingen brugernavne/IP'er gemmes). Alarmer via eksisterende ITIM → mail (aktiv i prod): "Service nede" (probe fejler 60 s), "Login: serverfejl" (straks), "Login: passkey ikke gennemført" (≥3/30 min), "Login: certifikat udløber" (<14 dage). Probe kørt mod prod: OK, 44 ms, cert 55 dage.
 - **Postgres i CI (punkt 3):** ny job kører HELE suiten på Postgres 16 (UTF-8) — lokalt 1736 passed. Ny `tests/test_auth_login_real_database.py` (passkey AutoFill + brugernavn ende-til-ende via HTTP): fejler på Postgres med præcis produktionsfejlen, når #300 rulles tilbage.
 - **Browsertest (punkt 4):** `timelapse-ui/e2e/` (Playwright, Chromium virtuel autentifikator som Touch ID) mod rigtig login-side + Headend + Postgres: AutoFill-start 200, AutoFill-login, knap-login, adgangskode, "Touch ID svarer aldrig". 5/5 to gange lokalt; fanger #300-fejlen. Deploy (`deploy-signal`, `deploy-macmini`) kræver nu begge nye jobs grønne.
-- **Login-siden (punkt 5):** svarer Touch ID ikke inden 10 s, vises forklaring + "Brug adgangskode i stedet" (afbryder ceremonien, fokus på adgangskode) — før ventede siden 75 s med alle knapper låst.
+- **Login-siden (punkt 5):** ~~10 s "Brug adgangskode i stedet"~~ — fjernet 2026-10-13 efter Peters krav ("Du må ikke lave en fall-back løsning for at skjule en dårlig kode"); login-siden kommer nu fra #302 (rodårsager rettet), og browsertesten dækker #302's forløb.
 - **Codex-review (5 fund) adresseret:** AutoFill-begin ved sidevisning tælles ikke længere som passkey-forsøg (kun begin med brugernavn); nginx-access-loggen indgår, så nginx' egne 502/503/504 og rate-limit 429 på `/api/auth/` også alarmerer (kontrolleret mod prod-log: finder netop de tre 500 fra 10/10 og 11/10); login-regler har eksplicit `for_seconds=60` (generisk 0→60 i `evaluate_alerts` er bevidst ikke ændret — det ville ændre eksisterende Edge-/disk-alarmer); deterministisk sign-counter + én worker i browsertesten; sporet registreret i `PAKKE_SPOR_REGISTER.md`.
 - **Status:** merged? NEJ. Deployet? NEJ.
 
