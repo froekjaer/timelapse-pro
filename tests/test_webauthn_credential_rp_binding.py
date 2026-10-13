@@ -54,11 +54,16 @@ def test_login_page_never_waits_forever_on_the_authenticator():
     login_page = (ROOT / "timelapse-ui/src/pages/LoginPage.tsx").read_text(encoding="utf-8")
     handler = login_page.split("async function handleWebAuthn()", 1)[1]
     assert "WebAuthnAbortService.cancelCeremony()" in handler
-    # the deadline covers login-begin and login-complete, not only the authenticator
-    assert handler.count("withDeadline(fetch(") == 2
+    # the deadline covers the authenticator, login-complete and (when the page
+    # could not prefetch) the late login-begin
+    assert "withDeadline(fetch(" in handler
     assert "withDeadline(startAuthentication(" in handler
-    # no background login-begin: it would overwrite a challenge in use elsewhere
-    assert "prefetch" not in login_page.lower()
+    assert "await withDeadline(prefetchPasskeyOptions())" in handler
+    # Background login-begin (2026-10-13 prefetch, so Touch ID is asked inside
+    # the click) must be usernameless: a per-user challenge would overwrite one
+    # in use in another tab; usernameless challenges each get their own row.
+    prefetch = login_page.split("function prefetchPasskeyOptions()", 1)[1].split("\n  }\n", 1)[0]
+    assert "body: JSON.stringify({})" in prefetch and "username" not in prefetch
     assert "clearTimeout(timer)" in handler
     assert "setLoading(false)" in handler
 
