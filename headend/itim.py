@@ -31,6 +31,7 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import (
@@ -585,9 +586,26 @@ def _probe_login(db: Session) -> None:
         metrics["auth_5xx_30m"] = max(metrics["auth_5xx_30m"], float(nginx_errors))
     failed = None
     if base_url:
-        result = login_health.probe_login(base_url)
-        metrics.update(result["metrics"])
-        failed = result["failed_step"]
+        # Every public login origin users can reach (Codex review on #301):
+        # base_url plus each allowed WebAuthn origin, probed separately; the
+        # target is only up when all are, and the weakest certificate counts.
+        from services.webauthn_origin import _csv_settings
+        allowed = _csv_settings(_setting(db, "webauthn_allowed_origins", os.getenv("WEBAUTHN_ALLOWED_ORIGINS", "")))
+        origins = list(dict.fromkeys([base_url.rstrip("/")] + [o for o in allowed if o.startswith("https://")]))
+        failures, certs, latencies = [], [], []
+        for origin in origins:
+            result = login_health.probe_login(origin)
+            if result["failed_step"]:
+                failures.append(f"{urlparse(origin).netloc}: {result['failed_step']}")
+            if "cert_days_left" in result["metrics"]:
+                certs.append(result["metrics"]["cert_days_left"])
+            latencies.append(result["metrics"].get("latency_ms", 0.0))
+        metrics["up"] = 0.0 if failures else 1.0
+        metrics["origins_probed"] = float(len(origins))
+        metrics["latency_ms"] = max(latencies) if latencies else 0.0
+        if certs:
+            metrics["cert_days_left"] = min(certs)
+        failed = "; ".join(failures) or None
         try:
             metrics["passkey_rp_mismatch_users"] = float(login_health.passkey_rp_mismatch_users(
                 db, login_health.effective_rp_ids(db, _setting)))

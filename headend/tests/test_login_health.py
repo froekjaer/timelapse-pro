@@ -291,3 +291,34 @@ def test_unconfigured_login_probe_is_unknown_not_ok(monkeypatch):
         assert called == [] and health.state == "unknown" and "ikke konfigureret" in health.summary
     finally:
         db.close()
+
+
+def test_every_public_login_origin_is_probed_and_one_failure_is_critical(monkeypatch):
+    import itim
+    from database import Base, SessionLocal, engine
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    settings = {"base_url": "https://backend.example.test:8443",
+                "webauthn_allowed_origins": "https://backend.example.test:8443,https://old.example.test"}
+    try:
+        monkeypatch.setattr(itim, "_setting", lambda _db, key, default="": settings.get(key, default))
+        monkeypatch.setattr(lh, "nginx_auth_errors", lambda *a, **k: 0)
+        monkeypatch.setattr(lh, "TELEMETRY", lh._Telemetry())
+        monkeypatch.setattr(lh, "passkey_rp_mismatch_users", lambda _db, rp: 0)
+        probed = []
+
+        def fake_probe(url):
+            probed.append(url)
+            ok = "old" not in url
+            return {"ok": ok, "failed_step": None if ok else "tls_certificate",
+                    "metrics": {"up": 1.0 if ok else 0.0, "latency_ms": 10.0, **({"cert_days_left": 40.0} if ok else {})}}
+        monkeypatch.setattr(lh, "probe_login", fake_probe)
+        itim._probe_login(db)
+        db.commit()
+        assert probed == ["https://backend.example.test:8443", "https://old.example.test"]
+        target = db.query(itim.ItimTarget).filter_by(target_key="svc:login").one()
+        health = db.query(itim.ItimHealthStatus).filter_by(target_id=target.id).one()
+        assert health.state == "critical" and "old.example.test: tls_certificate" in health.summary
+        assert itim._latest_value(db, target.id, "up") == 0.0
+    finally:
+        db.close()
