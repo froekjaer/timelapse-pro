@@ -258,6 +258,33 @@ def test_local_cli_session_is_audited_senior_technician(tmp_path):
     assert "session.start" in audit and "cli:orangepi" in audit
 
 
+def test_noninteractive_service_operation_as_root_starts_and_ends_local_cli_session(monkeypatch, tmp_path):
+    """The local TOTP technician portal uses this non-interactive CLI path."""
+    p = _FakePlatform()
+    p.current_session = lambda: None
+    started, ended = [], []
+    p.start_local_cli_session = lambda user: (started.append(user), p.session)[1]
+    p.invalidate = lambda session, reason: ended.append(reason)
+    monkeypatch.setattr(ops_mod, "create_service_platform", lambda **_kwargs: p)
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    monkeypatch.setenv("SUDO_USER", "orangepi")
+
+    assert cli.print_service_operation("camera.config.read", tmp_path, {"choices": True}) is True
+    assert started == ["orangepi"]
+    assert p.calls == ["camera.config.read"]
+    assert ended == ["cli operation complete"]
+
+
+def test_noninteractive_service_operation_reuses_existing_session(monkeypatch, tmp_path):
+    p = _FakePlatform()
+    p.start_local_cli_session = lambda _user: pytest.fail("must reuse existing session")
+    p.invalidate = lambda *_args: pytest.fail("must not end existing session")
+    monkeypatch.setattr(ops_mod, "create_service_platform", lambda **_kwargs: p)
+
+    assert cli.print_service_operation("camera.config.read", tmp_path) is True
+    assert p.calls == ["camera.config.read"]
+
+
 def test_cli_never_touches_gpio_and_lists_menu():
     src = (ROOT / "edge/tools/bootstrap_cli.py").read_text(encoding="utf-8")
     assert "/sys/class/gpio" not in src and "GPIO.output" not in src

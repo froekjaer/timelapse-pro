@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-14 — fra Codex til Peter/næste session: Edge2 Z30 LAB-manualfokus og servicetekniker-CLI/GUI
+
+- **Mandat og runtime-evidens:** Peter bad om at fikse og prøve igen på fysisk Edge2 (`TL-043EB9E72EFD`, Nikon Z30). LAB-start og autofocus virkede; `focus_drive=500` gav fejl. LAB blev bagefter stoppet, og autofocus blev kørt igen, så kameraet ikke blev efterladt i testfokus. Browserterminalens almindelige `orangepi`-shell kunne læse status, men havde ingen EdgeServiceSession — korrekt least-privilege, ikke omgået.
+- **Rettet lokalt, endnu ikke released/installeret:** (1) `bootstrap_cli.py --service-operation` og legacy `--maintenance` genbruger nu en eksisterende session eller starter som root den allerede etablerede, auditerede `local_cli`-session; den lukkes deterministisk efter én operation. Det får den root-kørende lokale TOTP-servicetekniker-GUI til at bruge samme autorisationsvej som den interaktive CLI. (2) Z30-manualfokus lukker nu Live View i samme gphoto2-transaktion: `liveviewaffocus=MF` → `viewfinder=1` → `manualfocusdrive` → `viewfinder=0`. Samme sekvens bruges af Service Operations/den lokale GUI. Antagelse der skal bekræftes på hardware: den tidligere kommando hang, fordi Viewfinder blev efterladt aktiv efter drive.
+- **Berørte filer:** `edge/camera/drivers/gphoto2_driver.py`, `edge/service_operations.py`, `edge/tools/bootstrap_cli.py`; regressionsdækning i `tests/test_lab_runtime_contract.py`, `tests/test_edge_tech_ui_camera_choices.py`, `tests/test_relay_modem_never_off.py`; spor registreret i `Dokumentation/PAKKE_SPOR_REGISTER.md`.
+- **Verificeret:** OP-001-cache `VERIFIED` mod canonical `9a1a454…`; `git log --all`, worktrees/stashes, åbne PR'er og historiske fokusspor gennemgået. Målrettet testkørsel: **88 passed**. Den udvidede kørsel havde én ikke-relateret lokal blokering: `tests/test_lab_start_progress.py::test_edge_post_uses_device_auth_and_ui_get_requires_user_and_device_access` importerede manglende `ai.model_results` før assertion; de øvrige 88 var grønne. `git diff --check` grøn.
+- **Næste kontrollerede trin:** commit kun ovenstående kendte filer, byg/signér og godkend Edge-artifact gennem update-flowet, installer på Edge2 og observer release receipt + agent/tunnel-sundhed. Retest derefter: LAB start → autofocus → `focus_drive=500` → preview/blur; stop LAB; lokal TOTP-GUI “Hent kameraets valg” og Focus drive; fysisk `sudo bootstrap_cli.py --service-operation camera.focus.manual --service-param value=500`. Ingen direkte filkopi eller bypass af update/signatur-flow.
+
 ### Handover 2026-10-13 — fra Claude til Peter/næste session: Touch ID-login i Safari — rodårsager rettet
 
 - **Peter:** "Touch-id SKAL virke" / "Du må ikke lave en fall-back løsning for at skjule en dårlig kode."
