@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-10-14 13:54 — fra Codex til Peter/næste session: Edge2 Z30 fokus-retest godkendt, deployet og observeret
+
+- **Udrulning:** Peter godkendte change ticket **#340** for Edge2 (`TL-043EB9E72EFD`) alene. Det signerede artifact `TL-ART-20261014-de2598ed8993` / `v2.8.1-lab.67` / `de2598ed89937137f6268cb853d709794a50b994` blev deployed 13:50. Pull-flowet kvitterede: artifact-signatur, SHA-256 og signer-scope accepteret; pre-update restore-backup oprettet; post-restart health check `post_restart_health_confirmed`. CMDB rapporterer den nye commit som installeret. Edge1-kandidat **#341** blev efterladt afventende og urørt.
+- **Fysisk Z30-verifikation:** LAB startede normalt, kameraet nåede *Lab klar*, og `Step focus` med den konfigurerede værdi **500** gav `focus_drive · OK` (nyt preview, Blur 2039.7 / Lys 83.4 / ok). Den efterfølgende `Autofocus test` gav `autofocus · OK` med samme preview-score. Dette bekræfter den nye sekvens `MF → viewfinder=1 → manualfocusdrive → viewfinder=0` og at kameraet ikke længere hænger efter focus drive. LAB blev stoppet bagefter; siden viser igen *Lab mode er ikke aktiv*.
+- **Tekniker-CLI/GUI:** Browserens reverse-tunnel til Edge2 og den almindelige `orangepi`-CLI er sund; `bootstrap_cli.py --service-status` svarer. Den tunnelbruger har bevidst ikke passwordløs sudo (`sudo: a password is required`) og kan derfor ikke efterligne den lokale root/TOTP-serviceteknikervej. Den nye root-vej er dækket af de målrettede regressionstests, men den fysiske lokale teknikerkonsol (`servicetekniker@192.168.100.129` med Peters egen nøgle på Edge2-nettet) blev ikke tilgået fra denne Mac. Kør dér ved lejlighed: først `camera.config.read choices=true`, dernæst `camera.focus.manual value=500`; GUI: “Hent kameraets valg” og manuel fokus. Commissioning-nøglen skal blive aktiv, indtil denne personlige login-verifikation er udført.
+- **Risiko/opfølgning:** Release-retention/rollback-evidens skal bevares. Manuel fokus og efterfølgende AF er nu fysisk verificeret på Edge2; den lokale teknikerkonsol er den eneste resterende hardware-evidens. Ingen Edge1-arbejde uden særskilt godkendelse.
+
 ### Handover 2026-10-14 — fra Codex til Peter/næste session: Edge2 Z30 LAB-manualfokus og servicetekniker-CLI/GUI
 
 - **Mandat og runtime-evidens:** Peter bad om at fikse og prøve igen på fysisk Edge2 (`TL-043EB9E72EFD`, Nikon Z30). LAB-start og autofocus virkede; `focus_drive=500` gav fejl. LAB blev bagefter stoppet, og autofocus blev kørt igen, så kameraet ikke blev efterladt i testfokus. Browserterminalens almindelige `orangepi`-shell kunne læse status, men havde ingen EdgeServiceSession — korrekt least-privilege, ikke omgået.
