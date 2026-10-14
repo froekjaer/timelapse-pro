@@ -18,11 +18,14 @@ liste for overlap; efter merge, ret listen til.
 
 ## Åbne spor — fulde felter (§14.6)
 
-Disse spor ændrer kode, sikkerhed eller den fælles governance-tekst og er derfor
-**fulde spor** efter §14.6 — ikke lette spor. #229 er lukket 2026-09-13 (se nederst
-i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet frisk
-2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
-tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
+### #301 login-pålidelighed — `claude/login-reliability-20261011`
+
+- **Mandat/session:** Claude, Peter 2026-10-11 ("Ja, gå i gang med punkt 2–5" efter "login … SKAL bare virke ALTID"); 2026-10-14 "gør #301 færdig".
+- **Formål/scope (faktisk diff):** ITIM-probe `svc:login` + login-telemetri (`headend/services/login_health.py`, middleware i `main.py`, regler i `itim.py`): TLS/login-side/AutoFill-start-probe, `/api/auth` 5xx (app + nginx-log), mislykkede Touch ID-forsøg fra login-sidens egne rapporter (#303), passkeys kun til forkert RP-domæne; hele pytest-suiten på Postgres i CI; Playwright-browsertest (`timelapse-ui/e2e/`, ny dev-afhængighed `@playwright/test`) af #302's login-forløb. Deploy-jobs kræver de to nye CI-jobs. **Ingen ændring af `LoginPage.tsx`** — den kommer fra #302 på main; den tidligere 10 s "brug adgangskode"-besked er fjernet efter Peters krav.
+- **Base/head:** base `main@04d0a524` (inkl. #300, #302, #303), head = PR #301 (seneste push).
+- **Overlap/restdisposition:** rører `headend/main.py` (én middleware-linje; ratchet 17550), `itim.py`, `ci.yml`, `vite.config.ts` (proxy-mål fra env). Ingen overlap med #297/#298/#299 ud over `main.py`-budgettet. Genbruger ITIM-alarmer/mail. Rest: ingen.
+- **Cross-repo/website-påvirkning:** (2) ingen påvirkning fundet, evidensbaseret (Verified, 2026-10-14): `gh search code` i hele froekjaer-organisationen efter `playwright`, `passkey`, `webauthn`, `login health` gav ingen træf uden for timelapse-pro; mission-framework nævner kun TimeLapse som eksempel-mission (MISSION.md) uden login/overvågning; Mission-Platform og froekjaer.dk (website) har intet login-/passkey-/ITIM-indhold. Overvågningen er TimeLapse-lokal ITIM (headend/itim.py), og Playwright er en dev-afhængighed i timelapse-ui. Ingen publicering berøres.
+- **Næste handling:** uafhængig review; merge + deploy; bekræft `svc:login` i ITIM efter deploy.
 
 ### #214 — `claude/globalconfig-parallel-load`
 

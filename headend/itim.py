@@ -31,6 +31,7 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import (
@@ -562,6 +563,79 @@ _OPS = {
 }
 
 
+def _probe_login(db: Session) -> None:
+    """Login end to end (2026-10-11): TLS + login page + passkey AutoFill
+    start through local nginx, and live login telemetry. See
+    services/login_health.py. The generic "Service nede" rule (service, up==0)
+    alerts on a failed probe; the login rules below cover the rest."""
+    from services import login_health
+
+    # Same sources the app itself uses for its public origin; if none is
+    # configured the probe cannot run and the target is "unknown", not "ok".
+    base_url = next((v.strip() for v in (
+        _setting(db, "base_url", os.getenv("BASE_URL", "")),
+        _setting(db, "webauthn_origin", os.getenv("WEBAUTHN_ORIGIN", "")),
+        os.getenv("ALLOWED_ORIGIN", ""),
+    ) if v and v.strip().startswith(("http://", "https://"))), "")
+    metrics: dict[str, float] = dict(login_health.TELEMETRY.snapshot())
+    # nginx-side failures (502/503/504, rate limiting) never reach the app;
+    # the access log sees everything browsers got, app errors included.
+    nginx_errors = login_health.nginx_auth_errors()
+    if nginx_errors is not None:
+        metrics["auth_errors_nginx_30m"] = float(nginx_errors)
+        metrics["auth_5xx_30m"] = max(metrics["auth_5xx_30m"], float(nginx_errors))
+    failed = None
+    if base_url:
+        # Every public login origin users can reach (Codex review on #301):
+        # base_url plus each allowed WebAuthn origin, probed separately; the
+        # target is only up when all are, and the weakest certificate counts.
+        from services.webauthn_origin import _csv_settings
+        allowed = _csv_settings(_setting(db, "webauthn_allowed_origins", os.getenv("WEBAUTHN_ALLOWED_ORIGINS", "")))
+        origins = list(dict.fromkeys([base_url.rstrip("/")] + [o for o in allowed if o.startswith("https://")]))
+        failures, certs, latencies = [], [], []
+        for origin in origins:
+            result = login_health.probe_login(origin)
+            if result["failed_step"]:
+                failures.append(f"{urlparse(origin).netloc}: {result['failed_step']}")
+            if "cert_days_left" in result["metrics"]:
+                certs.append(result["metrics"]["cert_days_left"])
+            latencies.append(result["metrics"].get("latency_ms", 0.0))
+        metrics["up"] = 0.0 if failures else 1.0
+        metrics["origins_probed"] = float(len(origins))
+        metrics["latency_ms"] = max(latencies) if latencies else 0.0
+        if certs:
+            metrics["cert_days_left"] = min(certs)
+        failed = "; ".join(failures) or None
+        try:
+            metrics["passkey_rp_mismatch_users"] = float(login_health.passkey_rp_mismatch_users(
+                db, login_health.effective_rp_ids(db, _setting)))
+        except Exception as exc:
+            log.debug("ITIM login rp-check fejl: %s", exc)
+    record_metrics(db, "svc:login", "service", metrics, display_name="Login")
+    if not base_url:
+        state, summary = "unknown", "Login-probe ikke konfigureret (base_url/BASE_URL mangler) — login er ikke overvåget"
+    elif failed:
+        state, summary = "critical", f"Login fejler: {failed}"
+    elif metrics.get("auth_5xx_30m", 0) > 0:
+        state = "critical"
+        summary = (f"Fejl ved login (30 min): {metrics['auth_5xx_30m']:.0f} — "
+                   f"{', '.join(login_health.TELEMETRY.last_errors()) or 'se nginx-log'}")
+    elif metrics.get("passkey_failed_30m", 0) >= 3:
+        state = "warning"
+        summary = (f"{metrics['passkey_failed_30m']:.0f} Touch ID-forsøg fejlede i browseren (30 min, rapporteret af browsere — ubekræftet): "
+                   f"{', '.join(login_health.TELEMETRY.last_failures())} — tjek bl.a. adgangskode-manager-udvidelser")
+    elif metrics.get("passkey_rp_mismatch_users", 0) > 0:
+        state = "warning"
+        summary = (f"{metrics['passkey_rp_mismatch_users']:.0f} bruger(e) har kun passkeys til et andet domæne "
+                   "— de kan ikke logge ind med Touch ID her")
+    elif 0 < metrics.get("cert_days_left", 999) < 14:
+        state, summary = "warning", f"TLS-certifikat udløber om {metrics['cert_days_left']:.0f} dage"
+    else:
+        state, summary = "ok", "Login virker"
+    set_health(db, "svc:login", "service", state, summary,
+               {k: round(v, 1) for k, v in metrics.items()}, display_name="Login")
+
+
 def _latest_value(db: Session, target_id: int, metric: str) -> Optional[float]:
     row = db.execute(text("""
         SELECT value FROM itim_metric_samples
@@ -730,7 +804,21 @@ _DEFAULT_RULES = [
     ("Edge disk kritisk fuld",        "edge",   None,            "ssd_used_pct",   ">",  95, 0,   "critical"),
     ("Billedfejl-rate høj",           "image_qa", "image_qa:all","unusable_rate",  ">",  20, 0,   "warning"),
     ("AI batch-jobs fejlet",          "pipeline","pipeline:ai",  "batch_jobs_failed_24h", ">", 0, 0, "warning"),
+    # Login (2026-10-11). A failed end-to-end probe (up==0) is covered by
+    # "Service nede" above; these catch what real browsers hit in between.
+    # for_s=60 is explicit: evaluate_alerts() treats 0 as 60 anyway, so with
+    # the 60 s collector an alert goes out within about two minutes.
+    ("Login: serverfejl",             "service", "svc:login",    "auth_5xx_30m",   ">",  0, 60,  "critical"),
+    # Untrusted signal: browser reports are unauthenticated (the user is not
+    # logged in yet), so this rule shows on the ITIM dashboard but never mails
+    # (see _DEFAULT_RULES_NO_NOTIFY) — anyone could post three fake reports.
+    ("Login: Touch ID fejler i browseren", "service", "svc:login", "passkey_failed_30m", ">=", 3, 60, "warning"),
+    ("Login: passkey til forkert domæne", "service", "svc:login", "passkey_rp_mismatch_users", ">", 0, 60, "warning"),
+    ("Login: certifikat udløber",     "service", "svc:login",    "cert_days_left", "<",  14, 60,  "warning"),
 ]
+
+
+_DEFAULT_RULES_NO_NOTIFY = {"Login: Touch ID fejler i browseren"}
 
 
 def seed_defaults(db: Session) -> None:
@@ -739,7 +827,8 @@ def seed_defaults(db: Session) -> None:
     for name, kind, key, metric, op, thr, fs, sev in _DEFAULT_RULES:
         if name not in existing:
             db.add(ItimAlertRule(name=name, target_kind=kind, target_key=key, metric=metric,
-                                 op=op, threshold=thr, for_seconds=fs, severity=sev))
+                                 op=op, threshold=thr, for_seconds=fs, severity=sev,
+                                 notify=name not in _DEFAULT_RULES_NO_NOTIFY))
             added += 1
     if added:
         db.commit()
@@ -749,7 +838,7 @@ def seed_defaults(db: Session) -> None:
 def run_collection_cycle(db: Session) -> None:
     """Én indsamlingsrunde — hvert probe er isoleret så én fejl ikke vælter resten."""
     for probe in (_probe_host_metrics, _probe_services, _probe_data_fast,
-                  _probe_edge_from_diagnostics, _probe_image_qa, _probe_ai_pipeline):
+                  _probe_edge_from_diagnostics, _probe_image_qa, _probe_ai_pipeline, _probe_login):
         try:
             probe(db)
         except Exception as exc:

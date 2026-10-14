@@ -53,6 +53,96 @@ jobs:
           pytest tests headend/tests edge/ai/tests \
             --import-mode=importlib -m "not integration" -p no:randomly -q
 
+  python-postgres:
+    # Same suite on a real Postgres (2026-10-11). SQLite does not enforce
+    # column types or lengths: passkey AutoFill returned 500 in production for
+    # a day and a half (settings.key VARCHAR(100), PR #300) while every
+    # SQLite test passed.
+    name: Unit and contract tests (Postgres)
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: timelapse
+          POSTGRES_PASSWORD: timelapse
+          POSTGRES_DB: timelapse_test
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U timelapse" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt -r headend/requirements.txt -r edge/requirements.txt
+      - name: Unit and contract tests on Postgres
+        env:
+          TIMELAPSE_TEST_DATABASE_URL: postgresql://timelapse:timelapse@localhost:5432/timelapse_test
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/headend:${{ github.workspace }}/edge
+        run: |
+          pytest tests headend/tests edge/ai/tests \
+            --import-mode=importlib -m "not integration" -p no:randomly -q
+
+  login-e2e:
+    # The real login page + Headend + Postgres in Chromium, with a virtual
+    # authenticator as Touch ID: AutoFill, button, password, and "Touch ID
+    # never answers" (timelapse-ui/e2e/). Peter 2026-10-11: login "SKAL bare
+    # virke ALTID".
+    name: Browser login (Playwright)
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: timelapse
+          POSTGRES_PASSWORD: timelapse
+          POSTGRES_DB: timelapse_e2e
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U timelapse" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Headend dependencies
+        run: pip install -r headend/requirements.txt
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install UI dependencies and Chromium
+        working-directory: timelapse-ui
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Browser login tests
+        working-directory: timelapse-ui
+        env:
+          E2E_PYTHON: python
+          E2E_DATABASE_URL: postgresql://timelapse:timelapse@localhost:5432/timelapse_e2e
+        run: npx playwright test -c e2e/playwright.config.ts
+      - name: Keep traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: login-e2e-traces
+          path: timelapse-ui/test-results/
+          retention-days: 7
+
   ui-check:
     name: Web UI Build Check
     runs-on: ubuntu-latest
@@ -79,7 +169,7 @@ jobs:
   deploy-signal:
     name: Signal Deploy
     runs-on: ubuntu-latest
-    needs: [ python-check, ui-check ]
+    needs: [ python-check, python-postgres, ui-check, login-e2e ]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Deploy signal
@@ -93,7 +183,7 @@ jobs:
   deploy-macmini:
     name: Deploy to Mac mini Headend
     runs-on: self-hosted
-    needs: [ python-check, ui-check ]
+    needs: [ python-check, python-postgres, ui-check, login-e2e ]
     # Manual-only (workflow_dispatch), NOT automatic on push, until the live
     # cutover below is done. Uses ~/projects/timelapse-pro-deploy, a checkout
     # dedicated to this job — never the interactive ~/projects/timelapse-pro
