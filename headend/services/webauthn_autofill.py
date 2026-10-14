@@ -54,8 +54,20 @@ def _purge(db, settings_model, now: float) -> None:
         db.delete(row)
 
 
-def begin(db, settings_model, rp_id: str, now: float | None = None) -> dict:
-    """Authentication options with no allowCredentials (any passkey for rp_id)."""
+def autofill_enabled(setting_value) -> bool:
+    """Server setting `webauthn_login_autofill` (default off, 2026-10-14).
+
+    Passkey AutoFill on the login page was switched off by #302 on the belief
+    that a pending AutoFill request blocked the Touch ID button in Safari; the
+    real cause turned out to be the LastPass extension. It comes back opt-in so
+    it can be verified in Safari and switched off again without a deploy."""
+    return str(setting_value or "").strip().lower() in {"on", "true", "1", "yes"}
+
+
+def begin(db, settings_model, rp_id: str, now: float | None = None, autofill_setting=None) -> dict:
+    """Authentication options with no allowCredentials (any passkey for rp_id).
+
+    `timelapseAutofill` tells the login page whether to offer passkey AutoFill."""
     import webauthn
     from webauthn.helpers.structs import UserVerificationRequirement
 
@@ -70,6 +82,7 @@ def begin(db, settings_model, rp_id: str, now: float | None = None) -> dict:
     db.add(settings_model(key=_challenge_key(opts["challenge"]),
                           value=json.dumps({"challenge": opts["challenge"], "created": now})))
     db.commit()
+    opts["timelapseAutofill"] = autofill_enabled(autofill_setting)
     return opts
 
 
