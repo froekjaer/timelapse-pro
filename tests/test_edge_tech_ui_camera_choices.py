@@ -82,6 +82,29 @@ def test_plain_read_unchanged(monkeypatch):
     assert ops.camera_config_read(None, None, {"path": "/main/a"}) == {"ok": True, "path": "/main/a", "value": "x"}
 
 
+def test_manual_focus_uses_closed_z30_liveview_transaction(monkeypatch):
+    calls = []
+    ops = so.ServiceOperations(base_dir=Path("/tmp"))
+
+    def gphoto(args, timeout=15):
+        calls.append((args, timeout))
+        return {"ok": True, "stdout": "", "stderr": "", "returncode": 0}
+
+    monkeypatch.setattr(ops, "_gphoto", gphoto)
+    result = ops.camera_focus_manual(None, None, {"value": "500"})
+
+    assert result["ok"] is True and result["path"] == "/main/actions/manualfocusdrive"
+    assert calls == [
+        (["--get-config", "/main/capturesettings/liveviewaffocus"], 8),
+        ([
+            "--set-config", "/main/capturesettings/liveviewaffocus=Manual Focus (selection)",
+            "--set-config", "/main/actions/viewfinder=1",
+            "--set-config", "/main/actions/manualfocusdrive=500",
+            "--set-config", "/main/actions/viewfinder=0",
+        ], 45),
+    ]
+
+
 def test_ui_fetches_through_service_operation_and_uses_resolved_path():
     assert '"--service-operation", "camera.config.read", "--service-param", "choices=true"' in UI
     assert "path = _photo_setting_path(key)" in UI

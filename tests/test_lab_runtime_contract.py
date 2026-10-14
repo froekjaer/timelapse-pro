@@ -62,12 +62,13 @@ def test_manual_focus_stops_when_nikon_manual_context_cannot_be_set(monkeypatch)
 
     monkeypatch.setattr(gphoto2_driver, "_run", fake_run)
     assert _nikon_driver().drive_manual_focus("500") is False
-    # Context and drive go in ONE gphoto2 session (context first, so gphoto2
-    # sets live view + MF before the drive); a failure is reported as False.
+    # Context, drive, and live-view shutdown go in ONE gphoto2 session. This
+    # prevents a Z30 manual-focus call from leaving gphoto2 live-view open.
     assert len(calls) == 1
     sets = [calls[0][i + 1] for i, a in enumerate(calls[0]) if a == "--set-config"]
     assert sets[0] == "/main/capturesettings/liveviewaffocus=Manual Focus (selection)"
-    assert sets[-1] == "/main/actions/manualfocusdrive=500"
+    assert sets[-2] == "/main/actions/manualfocusdrive=500"
+    assert sets[-1] == "/main/actions/viewfinder=0"
 
 
 def test_live_streamer_marks_itself_stopped_when_camera_stream_ends(monkeypatch):
