@@ -93,6 +93,12 @@ def test_options_ask_for_any_passkey_with_touch_id(env):
     db, _ = env
     opts = af.begin(db, Settings, RP_ID)
     assert opts["allowCredentials"] == [] and opts["userVerification"] == "required" and opts["rpId"] == RP_ID
+    assert opts["timelapseAutofill"] is False            # AutoFill is opt-in
+
+
+def test_autofill_flag_follows_the_setting():
+    assert af.autofill_enabled("on") and af.autofill_enabled("true")
+    assert not af.autofill_enabled(None) and not af.autofill_enabled("off") and not af.autofill_enabled("")
 
 
 def test_autofill_login_end_to_end_and_single_use(env):
@@ -140,10 +146,12 @@ def test_main_and_login_page_wiring():
     assert "db.delete(setting)" in complete
     assert "ResidentKeyRequirement.PREFERRED" in main
     page = (ROOT / "timelapse-ui/src/pages/LoginPage.tsx").read_text(encoding="utf-8")
-    # 2026-10-13: a pending AutoFill (conditional) request made Safari ignore
-    # the Touch ID button's request. The login page must never start one.
-    assert "useBrowserAutofill" not in page and "browserSupportsWebAuthnAutofill" not in page
-    assert 'autoComplete="username webauthn"' not in page
+    # AutoFill is opt-in (server setting webauthn_login_autofill, default off,
+    # 2026-10-14): the page only starts it when login-begin says so.
+    assert "if (options.timelapseAutofill) startAutofill()" in page
+    assert "useBrowserAutofill: true" in page
+    assert '"username webauthn"' in page and 'autoComplete={autofillOn ?' in page
+    assert '_get_setting(db, "webauthn_login_autofill", "off")' in begin
     # Touch ID is asked inside the click: the challenge is prefetched, and no
     # await precedes startAuthentication when it was.
     assert "prefetchPasskeyOptions()" in page and "PREFETCH_MAX_AGE_MS" in page

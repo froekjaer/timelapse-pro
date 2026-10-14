@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-14 — fra Claude til Peter/næste session: passkey AutoFill tilbage som opt-in
+
+- **Baggrund:** #302 fjernede AutoFill i troen på, at en ventende AutoFill-forespørgsel blokerede Touch ID-knappen i Safari; den rigtige årsag var LastPass-udvidelsen (2026-10-13). Om AutoFill + knap virker i Safari uden LastPass er IKKE verificeret.
+- **Ændring:** AutoFill styres af server-setting `webauthn_login_autofill` (standard `off` — ingen adfærdsændring ved deploy). Login-begin uden brugernavn returnerer `timelapseAutofill`; siden starter AutoFill på sin egen udfordring og sætter `autocomplete="username webauthn"` kun da. Knappens forløb (#302) uændret.
+- **Verificeret (Chromium, virtuel autentifikator, rigtig side + Headend + Postgres):** setting off: 6/6 (#301's browsertest); setting on: AutoFill-login + knap mens AutoFill venter (spec gemt i `.claude-tools/autofill-on.spec.ts` uden for repo; tilføjes #301's e2e efter merge). Python-suite grøn.
+- **Næste:** Peter tester i Safari uden LastPass med setting on; virker det ikke → `off` igen, ingen deploy.
+- **Status:** merged? NEJ. Deployet? NEJ.
+
 ### Handover 2026-10-13 — fra Claude til Peter/næste session: Touch ID-login i Safari — rodårsager rettet
 
 - **Peter:** "Touch-id SKAL virke" / "Du må ikke lave en fall-back løsning for at skjule en dårlig kode."
