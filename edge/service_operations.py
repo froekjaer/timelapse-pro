@@ -265,15 +265,17 @@ class ServiceOperations:
         # Nikon Z30 manualfocusdrive only works inside a live-view MF context.
         # Keep the full lifecycle in one process and explicitly close live
         # view afterwards; otherwise gphoto2 can hang after the motor move.
-        z30_context = self._gphoto(["--get-config", "/main/capturesettings/liveviewaffocus"], timeout=8)
-        if z30_context["ok"]:
-            result = self._gphoto([
-                "--set-config", "/main/capturesettings/liveviewaffocus=Manual Focus (selection)",
-                "--set-config", "/main/actions/viewfinder=1",
-                "--set-config", f"/main/actions/manualfocusdrive={value}",
-                "--set-config", "/main/actions/viewfinder=0",
-            ], timeout=45)
-            return {"ok": result["ok"], "path": "/main/actions/manualfocusdrive", "result": result}
+        # Some Z30 firmware states reject a standalone --get-config probe for
+        # liveviewaffocus even though the transactional set is supported.  Try
+        # the closed transaction first; non-Z30 cameras fall back below.
+        result = self._gphoto([
+            "--set-config", "/main/capturesettings/liveviewaffocus=Manual Focus (selection)",
+            "--set-config", "/main/actions/viewfinder=1",
+            "--set-config", f"/main/actions/manualfocusdrive={value}",
+            "--set-config", "/main/actions/viewfinder=0",
+        ], timeout=45)
+        if result["ok"]:
+            return {"ok": True, "path": "/main/actions/manualfocusdrive", "result": result}
         return self._first_gphoto_action(("/main/actions/manualfocusdrive", "/main/actions/manualfocusdrive2"), value)
 
     def camera_exposure_test(self, _platform, _session, _kwargs):
