@@ -47,6 +47,7 @@ EXPLICIT_EXCEPTIONS = {
     ("POST", "/api/auth/verify-mfa"),
     ("POST", "/api/auth/webauthn/login-begin"),
     ("POST", "/api/auth/webauthn/login-complete"),
+    ("POST", "/api/auth/webauthn/client-report"),   # login page reports browser-side passkey errors (user not logged in yet)
     ("POST", "/api/bootstrap"),  # one-time bootstrap token is validated in body
     ("POST", "/api/api/devices/enroll"),  # one-time enrollment token in body
     ("POST", "/api/devices/enroll"),
