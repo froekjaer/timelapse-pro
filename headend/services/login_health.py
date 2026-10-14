@@ -13,13 +13,12 @@ alert rules, e-mail notification and ITIM dashboard apply:
    Postgres). No username-bound call is made: that would replace a real
    user's pending challenge.
 2. LoginTelemetryMiddleware: counts what real browsers experience — any 5xx
-   from /api/auth/*, and passkey ceremonies the user explicitly started (the
-   username + Touch ID button: login-begin with a username) that never
-   completed (no login-complete 200 from the same client within
-   ABANDON_AFTER_S). The usernameless AutoFill begin fires on every page
-   load before the user picks anything, so it is not an attempt and is not
-   counted. Probe requests are excluded. In memory only; no usernames or IP
-   addresses leave this module (client key is a short hash).
+   from /api/auth/*, completed passkey logins, and failed Touch ID attempts
+   as reported by the login page itself (#303: client-report with
+   stage=touch-id — refused by the browser, cancelled, or the page's 75 s
+   deadline). Since #302 the Touch ID click sends no login-begin (the
+   challenge is prefetched), so the browser's own report is the only signal
+   of a failed attempt. Probe requests are excluded. In memory only.
 3. nginx_auth_errors(): failures nginx itself returns (502/503/504, rate
    limiting) never reach the app or the middleware; they are read from the
    nginx access log so the 5xx alert covers what browsers actually saw.
@@ -41,9 +40,9 @@ from urllib.parse import urlparse
 
 PROBE_HEADER = "x-timelapse-login-probe"
 WINDOW_S = 30 * 60
-ABANDON_AFTER_S = 120
-_BEGIN = "/api/auth/webauthn/login-begin"
 _COMPLETE = "/api/auth/webauthn/login-complete"
+_REPORT = "/api/auth/webauthn/client-report"    # login page → browser-side errors (#303)
+_BEGIN = "/api/auth/webauthn/login-begin"
 
 
 # ── Telemetry ───────────────────────────────────────────────────────────────
@@ -52,57 +51,42 @@ class _Telemetry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.errors: deque[tuple[float, str, int]] = deque(maxlen=500)     # (ts, path, status)
-        self.begins: dict[str, float] = {}                                   # client -> last begin ts
         self.completes: deque[float] = deque(maxlen=2000)
-        self.abandoned: deque[float] = deque(maxlen=2000)
-        self.begun: deque[float] = deque(maxlen=2000)
+        self.failures: deque[tuple[float, str]] = deque(maxlen=500)         # (ts, error name)
 
-    def record(self, path: str, status: int, client: str, now: float | None = None,
-               explicit_begin: bool = True) -> None:
+    def record(self, path: str, status: int, now: float | None = None, report: dict | None = None) -> None:
         now = time.time() if now is None else now
         with self._lock:
-            self._expire(now)
             if status >= 500:
                 self.errors.append((now, path, status))
-            if path == _BEGIN and explicit_begin and 200 <= status < 300:
-                self.begun.append(now)
-                self.begins[client] = now
-            elif path == _COMPLETE and 200 <= status < 300:
+            if path == _COMPLETE and 200 <= status < 300:
                 self.completes.append(now)
-                self.begins.pop(client, None)
-
-    def _expire(self, now: float) -> None:
-        for client, started in list(self.begins.items()):
-            if now - started > ABANDON_AFTER_S:
-                self.abandoned.append(started)
-                del self.begins[client]
+            elif path == _REPORT and report and report.get("stage") == "touch-id" \
+                    and report.get("name") != "AbortError":
+                # A Touch ID attempt the browser refused, the user cancelled, or
+                # that hit the page's 75 s deadline — the login page reports it.
+                self.failures.append((now, str(report.get("name") or "?")[:60]))
 
     def snapshot(self, now: float | None = None) -> dict[str, float]:
         now = time.time() if now is None else now
         cutoff = now - WINDOW_S
         with self._lock:
-            self._expire(now)
             return {
                 "auth_5xx_30m": float(sum(1 for ts, _p, _s in self.errors if ts >= cutoff)),
-                "passkey_begin_30m": float(sum(1 for ts in self.begun if ts >= cutoff)),
                 "passkey_complete_30m": float(sum(1 for ts in self.completes if ts >= cutoff)),
-                "passkey_abandoned_30m": float(sum(1 for ts in self.abandoned if ts >= cutoff)),
+                "passkey_failed_30m": float(sum(1 for ts, _n in self.failures if ts >= cutoff)),
             }
 
     def last_errors(self, limit: int = 3) -> list[str]:
         with self._lock:
             return [f"{p} {s}" for _ts, p, s in list(self.errors)[-limit:]]
 
+    def last_failures(self, limit: int = 3) -> list[str]:
+        with self._lock:
+            return [name for _ts, name in list(self.failures)[-limit:]]
+
 
 TELEMETRY = _Telemetry()
-
-
-def _client_key(scope) -> str:
-    headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
-    ip = headers.get("x-real-ip") or headers.get("x-forwarded-for", "").split(",")[0].strip() \
-        or (scope.get("client") or ("", 0))[0]
-    raw = f"{ip}|{headers.get('user-agent', '')}"
-    return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 class LoginTelemetryMiddleware:
@@ -122,7 +106,7 @@ class LoginTelemetryMiddleware:
 
         async def receive_wrapper():
             message = await receive()
-            if path == _BEGIN and message.get("type") == "http.request" and len(body) < 4096:
+            if path == _REPORT and message.get("type") == "http.request" and len(body) < 4096:
                 body.extend(message.get("body", b"")[:4096])
             return message
 
@@ -135,31 +119,43 @@ class LoginTelemetryMiddleware:
             await self.app(scope, receive_wrapper, send_wrapper)
         finally:
             try:
-                TELEMETRY.record(path, status["code"], _client_key(scope),
-                                 explicit_begin=_names_a_user(bytes(body)))
+                TELEMETRY.record(path, status["code"], report=_report(bytes(body)) if path == _REPORT else None)
             except Exception:
                 pass
 
 
-def _names_a_user(body: bytes) -> bool:
-    """login-begin with a username = the user pressed the Touch ID button."""
+def _report(body: bytes) -> dict | None:
     try:
-        return bool(str(json.loads(body or b"{}").get("username") or "").strip())
-    except (ValueError, AttributeError):
-        return False
+        data = json.loads(body or b"{}")
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 # ── nginx-side failures ─────────────────────────────────────────────────────
 
-NGINX_ACCESS_LOG = os.getenv("TIMELAPSE_NGINX_ACCESS_LOG", "/opt/homebrew/var/log/nginx-timelapse-access.log")
+# Known locations: deploy/install/install_headend.sh writes
+# /var/log/timelapse/nginx-access.log; the current Mac mini uses the Homebrew
+# path. TIMELAPSE_NGINX_ACCESS_LOG overrides both.
+_NGINX_LOG_CANDIDATES = ("/var/log/timelapse/nginx-access.log", "/opt/homebrew/var/log/nginx-timelapse-access.log")
+
+
+def nginx_access_log_path() -> str | None:
+    configured = os.getenv("TIMELAPSE_NGINX_ACCESS_LOG", "").strip()
+    if configured:
+        return configured
+    return next((p for p in _NGINX_LOG_CANDIDATES if os.path.isfile(p)), None)
 _NGINX_LINE = re.compile(r'\[(?P<t>[^\]]+)\] "(?P<m>[A-Z]+) (?P<p>\S+)[^"]*" (?P<s>\d{3})')
 
 
-def nginx_auth_errors(log_path: str = NGINX_ACCESS_LOG, now: float | None = None,
+def nginx_auth_errors(log_path: str | None = None, now: float | None = None,
                       window_s: int = WINDOW_S, tail_bytes: int = 4_000_000) -> int | None:
     """/api/auth requests answered 5xx or 429 by nginx or the app in the last
     window, excluding the probe. None when the log cannot be read."""
     now = time.time() if now is None else now
+    log_path = log_path or nginx_access_log_path()
+    if not log_path:
+        return None
     try:
         with open(log_path, "rb") as fh:
             fh.seek(0, os.SEEK_END)

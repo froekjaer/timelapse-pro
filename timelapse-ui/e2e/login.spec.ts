@@ -96,3 +96,21 @@ test('password login', async ({ page }) => {
   await page.getByRole('button', { name: 'Log ind', exact: true }).click()
   await expectLoggedIn(page)
 })
+
+test('Touch ID that never answers ends with an error and a server report, not an endless spinner', async ({ page }) => {
+  // The login page's own 75 s deadline (LoginPage.tsx); this is the 2026-10-13
+  // Safari symptom (an extension swallowing the request).
+  test.setTimeout(120_000)
+  await addTouchId(page, { responds: false })
+  await page.goto('/login')
+  await page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin'))
+  const report = page.waitForRequest(r => r.url().endsWith('/api/auth/webauthn/client-report'), { timeout: 90_000 })
+  await page.getByText('Log ind med Windows Hello / Touch ID').click()
+  const body = JSON.parse((await report).postData() ?? '{}')
+  expect(body.stage).toBe('touch-id')
+  // Chromium honours the WebAuthn timeout (60 s) and refuses first; Safari
+  // with an extension in the way did not, and the page's 75 s deadline ended
+  // it. Either way: a visible error, never an endless spinner.
+  await expect(page.getByText(/svarede ikke|blev annulleret/)).toBeVisible()
+  await expect(page.getByText('Log ind med Windows Hello / Touch ID')).toBeEnabled()
+})

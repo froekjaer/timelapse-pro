@@ -11,35 +11,30 @@ from services import login_health as lh
 
 # ── telemetry ──────────────────────────────────────────────────────────────────
 
-def test_begin_without_complete_counts_as_abandoned_after_timeout():
+def test_failed_touch_id_reports_are_counted_and_age_out():
     t = lh._Telemetry()
-    t.record(lh._BEGIN, 200, "a", now=1000)
-    assert t.snapshot(now=1000 + lh.ABANDON_AFTER_S - 1)["passkey_abandoned_30m"] == 0
-    assert t.snapshot(now=1000 + lh.ABANDON_AFTER_S + 1)["passkey_abandoned_30m"] == 1
+    t.record(lh._REPORT, 204, now=1000, report={"stage": "touch-id", "name": "Error"})
+    t.record(lh._REPORT, 204, now=1001, report={"stage": "touch-id", "name": "NotAllowedError"})
+    assert t.snapshot(now=1002)["passkey_failed_30m"] == 2
+    assert t.last_failures() == ["Error", "NotAllowedError"]
+    assert t.snapshot(now=1000 + lh.WINDOW_S + 5)["passkey_failed_30m"] == 0
 
 
-def test_completed_ceremony_is_not_abandoned():
+def test_aborts_and_prefetch_reports_are_not_failed_attempts():
+    # AbortError = page left / next click took over; prefetch = no attempt yet.
     t = lh._Telemetry()
-    t.record(lh._BEGIN, 200, "a", now=1000)
-    t.record(lh._COMPLETE, 200, "a", now=1005)
-    snap = t.snapshot(now=1000 + lh.ABANDON_AFTER_S + 60)
-    assert snap["passkey_abandoned_30m"] == 0 and snap["passkey_complete_30m"] == 1
+    t.record(lh._REPORT, 204, now=1000, report={"stage": "touch-id", "name": "AbortError"})
+    t.record(lh._REPORT, 204, now=1000, report={"stage": "prefetch", "name": "TypeError"})
+    assert t.snapshot(now=1001)["passkey_failed_30m"] == 0
 
 
-def test_server_errors_are_counted_and_age_out():
+def test_completed_logins_and_server_errors_are_counted():
     t = lh._Telemetry()
-    t.record(lh._BEGIN, 500, "a", now=1000)
-    assert t.snapshot(now=1001)["auth_5xx_30m"] == 1
+    t.record(lh._COMPLETE, 200, now=1000)
+    t.record(lh._BEGIN, 500, now=1000)
+    snap = t.snapshot(now=1001)
+    assert snap["passkey_complete_30m"] == 1 and snap["auth_5xx_30m"] == 1
     assert t.snapshot(now=1000 + lh.WINDOW_S + 1)["auth_5xx_30m"] == 0
-
-
-def test_autofill_page_load_begin_is_not_an_attempt():
-    # Codex review on #301: every page load sends the usernameless begin;
-    # only the explicit (username + button) begin is a passkey attempt.
-    t = lh._Telemetry()
-    t.record(lh._BEGIN, 200, "a", now=1000, explicit_begin=False)
-    snap = t.snapshot(now=1000 + lh.ABANDON_AFTER_S + 1)
-    assert snap["passkey_abandoned_30m"] == 0 and snap["passkey_begin_30m"] == 0
 
 
 def _run_middleware(app, path, headers=(), body=b""):
@@ -85,19 +80,27 @@ def test_middleware_ignores_probe_requests_and_other_paths(monkeypatch):
     assert t.snapshot()["auth_5xx_30m"] == 1
 
 
-def test_middleware_tells_autofill_from_button_begin(monkeypatch):
+def test_middleware_reads_the_login_page_error_report(monkeypatch):
     t = lh._Telemetry()
     monkeypatch.setattr(lh, "TELEMETRY", t)
 
-    async def ok_app(scope, receive, send):
+    async def report_app(scope, receive, send):
         await receive()
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"{}"})
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
 
-    _run_middleware(ok_app, lh._BEGIN, body=b"{}")
-    assert t.snapshot()["passkey_begin_30m"] == 0
-    _run_middleware(ok_app, lh._BEGIN, body=b'{"username": "peter"}')
-    assert t.snapshot()["passkey_begin_30m"] == 1
+    _run_middleware(report_app, lh._REPORT, body=b'{"stage": "touch-id", "name": "Error", "message": "svarede ikke"}')
+    _run_middleware(report_app, lh._REPORT, body=b"not json")
+    assert t.snapshot()["passkey_failed_30m"] == 1
+
+
+def test_nginx_log_path_follows_the_installer_or_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("TIMELAPSE_NGINX_ACCESS_LOG", str(tmp_path / "x.log"))
+    assert lh.nginx_access_log_path() == str(tmp_path / "x.log")
+    monkeypatch.delenv("TIMELAPSE_NGINX_ACCESS_LOG")
+    assert "/var/log/timelapse/nginx-access.log" in lh._NGINX_LOG_CANDIDATES   # deploy/install/install_headend.sh
+    monkeypatch.setattr(lh, "_NGINX_LOG_CANDIDATES", (str(tmp_path / "missing.log"),))
+    assert lh.nginx_access_log_path() is None and lh.nginx_auth_errors() is None
 
 
 def test_nginx_log_counts_auth_5xx_and_429_but_not_probe_or_other_paths(tmp_path):
@@ -174,9 +177,30 @@ def test_itim_runs_login_probe_and_has_login_alert_rules():
     import inspect
     assert "_probe_login" in inspect.getsource(itim.run_collection_cycle)
     names = {rule[0] for rule in itim._DEFAULT_RULES}
-    assert {"Login: serverfejl", "Login: passkey ikke gennemført", "Login: certifikat udløber"} <= names
+    assert {"Login: serverfejl", "Login: Touch ID fejler i browseren", "Login: passkey til forkert domæne",
+            "Login: certifikat udløber"} <= names
     service_down = next(r for r in itim._DEFAULT_RULES if r[0] == "Service nede")
     assert service_down[1] == "service" and service_down[2] is None   # covers svc:login up==0
+
+
+def test_itim_login_probe_warns_on_rp_mismatch(monkeypatch):
+    import itim
+    from database import Base, SessionLocal, engine
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        monkeypatch.setattr(itim, "_setting", lambda _db, key, default="": "https://example.test")
+        monkeypatch.setattr(lh, "probe_login", lambda url: {"ok": True, "failed_step": None, "metrics": {"up": 1.0}})
+        monkeypatch.setattr(lh, "nginx_auth_errors", lambda *a, **k: 0)
+        monkeypatch.setattr(lh, "TELEMETRY", lh._Telemetry())
+        monkeypatch.setattr(lh, "passkey_rp_mismatch_users", lambda _db, rp: 2)
+        itim._probe_login(db)
+        db.commit()
+        target = db.query(itim.ItimTarget).filter_by(target_key="svc:login").one()
+        health = db.query(itim.ItimHealthStatus).filter_by(target_id=target.id).one()
+        assert health.state == "warning" and "andet domæne" in health.summary
+    finally:
+        db.close()
 
 
 def test_itim_login_probe_records_critical_health_on_failure(monkeypatch):

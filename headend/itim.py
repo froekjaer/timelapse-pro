@@ -595,8 +595,14 @@ def _probe_login(db: Session) -> None:
         state = "critical"
         summary = (f"Fejl ved login (30 min): {metrics['auth_5xx_30m']:.0f} — "
                    f"{', '.join(login_health.TELEMETRY.last_errors()) or 'se nginx-log'}")
-    elif metrics.get("passkey_abandoned_30m", 0) >= 3:
-        state, summary = "warning", "Flere passkey-logins startet men ikke gennemført (30 min)"
+    elif metrics.get("passkey_failed_30m", 0) >= 3:
+        state = "warning"
+        summary = (f"{metrics['passkey_failed_30m']:.0f} Touch ID-forsøg fejlede i browseren (30 min): "
+                   f"{', '.join(login_health.TELEMETRY.last_failures())} — tjek bl.a. adgangskode-manager-udvidelser")
+    elif metrics.get("passkey_rp_mismatch_users", 0) > 0:
+        state = "warning"
+        summary = (f"{metrics['passkey_rp_mismatch_users']:.0f} bruger(e) har kun passkeys til et andet domæne "
+                   "— de kan ikke logge ind med Touch ID her")
     elif 0 < metrics.get("cert_days_left", 999) < 14:
         state, summary = "warning", f"TLS-certifikat udløber om {metrics['cert_days_left']:.0f} dage"
     else:
@@ -778,7 +784,8 @@ _DEFAULT_RULES = [
     # for_s=60 is explicit: evaluate_alerts() treats 0 as 60 anyway, so with
     # the 60 s collector an alert goes out within about two minutes.
     ("Login: serverfejl",             "service", "svc:login",    "auth_5xx_30m",   ">",  0, 60,  "critical"),
-    ("Login: passkey ikke gennemført", "service", "svc:login",   "passkey_abandoned_30m", ">=", 3, 60, "warning"),
+    ("Login: Touch ID fejler i browseren", "service", "svc:login", "passkey_failed_30m", ">=", 3, 60, "warning"),
+    ("Login: passkey til forkert domæne", "service", "svc:login", "passkey_rp_mismatch_users", ">", 0, 60, "warning"),
     ("Login: certifikat udløber",     "service", "svc:login",    "cert_days_left", "<",  14, 60,  "warning"),
 ]
 
