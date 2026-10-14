@@ -77,9 +77,12 @@ class _Telemetry:
                 "passkey_failed_30m": float(sum(1 for ts, _n in self.failures if ts >= cutoff)),
             }
 
-    def last_errors(self, limit: int = 3) -> list[str]:
+    def last_errors(self, limit: int = 3, now: float | None = None) -> list[str]:
+        """Application errors inside the current window only."""
+        now = time.time() if now is None else now
+        cutoff = now - WINDOW_S
         with self._lock:
-            return [f"{p} {s}" for _ts, p, s in list(self.errors)[-limit:]]
+            return [f"{p} {s}" for ts, p, s in list(self.errors) if ts >= cutoff][-limit:]
 
     def last_failures(self, limit: int = 3) -> list[str]:
         with self._lock:

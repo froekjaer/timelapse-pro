@@ -569,7 +569,13 @@ def _probe_login(db: Session) -> None:
     alerts on a failed probe; the login rules below cover the rest."""
     from services import login_health
 
-    base_url = _setting(db, "base_url", os.getenv("BASE_URL", "")).strip()
+    # Same sources the app itself uses for its public origin; if none is
+    # configured the probe cannot run and the target is "unknown", not "ok".
+    base_url = next((v.strip() for v in (
+        _setting(db, "base_url", os.getenv("BASE_URL", "")),
+        _setting(db, "webauthn_origin", os.getenv("WEBAUTHN_ORIGIN", "")),
+        os.getenv("ALLOWED_ORIGIN", ""),
+    ) if v and v.strip().startswith(("http://", "https://"))), "")
     metrics: dict[str, float] = dict(login_health.TELEMETRY.snapshot())
     # nginx-side failures (502/503/504, rate limiting) never reach the app;
     # the access log sees everything browsers got, app errors included.
@@ -588,7 +594,9 @@ def _probe_login(db: Session) -> None:
         except Exception as exc:
             log.debug("ITIM login rp-check fejl: %s", exc)
     record_metrics(db, "svc:login", "service", metrics, display_name="Login")
-    if failed:
+    if not base_url:
+        state, summary = "unknown", "Login-probe ikke konfigureret (base_url/BASE_URL mangler) — login er ikke overvåget"
+    elif failed:
         state, summary = "critical", f"Login fejler: {failed}"
     elif metrics.get("auth_5xx_30m", 0) > 0:
         state = "critical"

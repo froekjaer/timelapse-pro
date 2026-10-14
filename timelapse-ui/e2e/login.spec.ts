@@ -38,6 +38,15 @@ async function addTouchId(page: Page, { responds = true, verified = true } = {})
   return { cdp, authenticatorId }
 }
 
+// Register the wait before navigating: the mount-time prefetch can finish
+// before a waiter added after goto() exists (Codex review on #301).
+async function gotoLoginWithPrefetch(page: Page) {
+  await Promise.all([
+    page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin')),
+    page.goto('/login'),
+  ])
+}
+
 async function expectLoggedIn(page: Page) {
   await page.waitForURL(url => !url.pathname.startsWith('/login'), { timeout: 20_000 })
   const me = await page.request.get('/api/auth/me')
@@ -56,8 +65,7 @@ test('the login page prepares Touch ID ahead and never starts an AutoFill reques
 
 test('Touch ID button logs in without typing anything', async ({ page }) => {
   await addTouchId(page)
-  await page.goto('/login')
-  await page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin'))
+  await gotoLoginWithPrefetch(page)
   await page.getByText('Log ind med Windows Hello / Touch ID').click()
   await expectLoggedIn(page)
 })
@@ -65,8 +73,7 @@ test('Touch ID button logs in without typing anything', async ({ page }) => {
 test('Touch ID button asks the authenticator inside the click (no request first)', async ({ page }) => {
   // Safari only honours a passkey request made directly in the click.
   await addTouchId(page)
-  await page.goto('/login')
-  await page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin'))
+  await gotoLoginWithPrefetch(page)
   const beforeClick: string[] = []
   page.on('request', r => beforeClick.push(r.url()))
   await page.getByText('Log ind med Windows Hello / Touch ID').click()
@@ -78,8 +85,7 @@ test('Touch ID button asks the authenticator inside the click (no request first)
 test('Touch ID works on the next click after a failed attempt', async ({ page }) => {
   // First attempt: fingerprint not recognised (user verification fails).
   const { cdp, authenticatorId } = await addTouchId(page, { verified: false })
-  await page.goto('/login')
-  await page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin'))
+  await gotoLoginWithPrefetch(page)
   const refreshed = page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin'))
   await page.getByText('Log ind med Windows Hello / Touch ID').click()
   await expect(page.locator('text=/Touch ID|Windows Hello|godkendt/').first()).toBeVisible()
@@ -97,20 +103,24 @@ test('password login', async ({ page }) => {
   await expectLoggedIn(page)
 })
 
-test('Touch ID that never answers ends with an error and a server report, not an endless spinner', async ({ page }) => {
-  // The login page's own 75 s deadline (LoginPage.tsx); this is the 2026-10-13
-  // Safari symptom (an extension swallowing the request).
-  test.setTimeout(120_000)
+test('Touch ID that never answers hits the page deadline: error and server report, never an endless spinner', async ({ page }) => {
+  // The login page's own 75 s deadline (LoginPage.tsx) is what ended the
+  // 2026-10-13 Safari case (an extension swallowing the request). Chromium
+  // would otherwise stop at the server's 60 s WebAuthn timeout first, so the
+  // options are given a long timeout here: only the page deadline can end it.
+  test.setTimeout(150_000)
+  await page.route('**/api/auth/webauthn/login-begin', async route => {
+    const response = await route.fetch()
+    const options = await response.json()
+    await route.fulfill({ response, json: { ...options, timeout: 600_000 } })
+  })
   await addTouchId(page, { responds: false })
-  await page.goto('/login')
-  await page.waitForResponse(r => r.url().endsWith('/api/auth/webauthn/login-begin'))
-  const report = page.waitForRequest(r => r.url().endsWith('/api/auth/webauthn/client-report'), { timeout: 90_000 })
+  await gotoLoginWithPrefetch(page)
+  const report = page.waitForRequest(r => r.url().endsWith('/api/auth/webauthn/client-report'), { timeout: 100_000 })
   await page.getByText('Log ind med Windows Hello / Touch ID').click()
   const body = JSON.parse((await report).postData() ?? '{}')
   expect(body.stage).toBe('touch-id')
-  // Chromium honours the WebAuthn timeout (60 s) and refuses first; Safari
-  // with an extension in the way did not, and the page's 75 s deadline ended
-  // it. Either way: a visible error, never an endless spinner.
-  await expect(page.getByText(/svarede ikke|blev annulleret/)).toBeVisible()
+  expect(body.message).toContain('svarede ikke')
+  await expect(page.getByText('svarede ikke')).toBeVisible()
   await expect(page.getByText('Log ind med Windows Hello / Touch ID')).toBeEnabled()
 })

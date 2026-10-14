@@ -262,3 +262,32 @@ def test_rp_mismatch_counts_users_with_only_foreign_passkeys():
         db.query(User).filter(User.username.in_(names)).delete(synchronize_session=False)
         db.commit()
         db.close()
+
+
+def test_last_errors_only_shows_the_current_window():
+    t = lh._Telemetry()
+    t.record(lh._BEGIN, 500, now=1000)
+    assert t.last_errors(now=1001) == [f"{lh._BEGIN} 500"]
+    assert t.last_errors(now=1000 + lh.WINDOW_S + 1) == []      # stale app error not shown for a new nginx incident
+
+
+def test_unconfigured_login_probe_is_unknown_not_ok(monkeypatch):
+    import itim
+    from database import Base, SessionLocal, engine
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        monkeypatch.setattr(itim, "_setting", lambda _db, key, default="": "")
+        for var in ("BASE_URL", "WEBAUTHN_ORIGIN", "ALLOWED_ORIGIN"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(lh, "nginx_auth_errors", lambda *a, **k: None)
+        monkeypatch.setattr(lh, "TELEMETRY", lh._Telemetry())
+        called = []
+        monkeypatch.setattr(lh, "probe_login", lambda url: called.append(url))
+        itim._probe_login(db)
+        db.commit()
+        target = db.query(itim.ItimTarget).filter_by(target_key="svc:login").one()
+        health = db.query(itim.ItimHealthStatus).filter_by(target_id=target.id).one()
+        assert called == [] and health.state == "unknown" and "ikke konfigureret" in health.summary
+    finally:
+        db.close()
