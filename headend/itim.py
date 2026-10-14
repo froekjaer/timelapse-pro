@@ -583,9 +583,8 @@ def _probe_login(db: Session) -> None:
         metrics.update(result["metrics"])
         failed = result["failed_step"]
         try:
-            from services.webauthn_origin import _default_rp_id_for_origin
-            metrics["passkey_rp_mismatch_users"] = float(
-                login_health.passkey_rp_mismatch_users(db, _default_rp_id_for_origin(base_url)))
+            metrics["passkey_rp_mismatch_users"] = float(login_health.passkey_rp_mismatch_users(
+                db, login_health.effective_rp_ids(db, _setting)))
         except Exception as exc:
             log.debug("ITIM login rp-check fejl: %s", exc)
     record_metrics(db, "svc:login", "service", metrics, display_name="Login")
@@ -597,7 +596,7 @@ def _probe_login(db: Session) -> None:
                    f"{', '.join(login_health.TELEMETRY.last_errors()) or 'se nginx-log'}")
     elif metrics.get("passkey_failed_30m", 0) >= 3:
         state = "warning"
-        summary = (f"{metrics['passkey_failed_30m']:.0f} Touch ID-forsøg fejlede i browseren (30 min): "
+        summary = (f"{metrics['passkey_failed_30m']:.0f} Touch ID-forsøg fejlede i browseren (30 min, rapporteret af browsere — ubekræftet): "
                    f"{', '.join(login_health.TELEMETRY.last_failures())} — tjek bl.a. adgangskode-manager-udvidelser")
     elif metrics.get("passkey_rp_mismatch_users", 0) > 0:
         state = "warning"
@@ -784,10 +783,16 @@ _DEFAULT_RULES = [
     # for_s=60 is explicit: evaluate_alerts() treats 0 as 60 anyway, so with
     # the 60 s collector an alert goes out within about two minutes.
     ("Login: serverfejl",             "service", "svc:login",    "auth_5xx_30m",   ">",  0, 60,  "critical"),
+    # Untrusted signal: browser reports are unauthenticated (the user is not
+    # logged in yet), so this rule shows on the ITIM dashboard but never mails
+    # (see _DEFAULT_RULES_NO_NOTIFY) — anyone could post three fake reports.
     ("Login: Touch ID fejler i browseren", "service", "svc:login", "passkey_failed_30m", ">=", 3, 60, "warning"),
     ("Login: passkey til forkert domæne", "service", "svc:login", "passkey_rp_mismatch_users", ">", 0, 60, "warning"),
     ("Login: certifikat udløber",     "service", "svc:login",    "cert_days_left", "<",  14, 60,  "warning"),
 ]
+
+
+_DEFAULT_RULES_NO_NOTIFY = {"Login: Touch ID fejler i browseren"}
 
 
 def seed_defaults(db: Session) -> None:
@@ -796,7 +801,8 @@ def seed_defaults(db: Session) -> None:
     for name, kind, key, metric, op, thr, fs, sev in _DEFAULT_RULES:
         if name not in existing:
             db.add(ItimAlertRule(name=name, target_kind=kind, target_key=key, metric=metric,
-                                 op=op, threshold=thr, for_seconds=fs, severity=sev))
+                                 op=op, threshold=thr, for_seconds=fs, severity=sev,
+                                 notify=name not in _DEFAULT_RULES_NO_NOTIFY))
             added += 1
     if added:
         db.commit()

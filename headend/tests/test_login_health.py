@@ -220,3 +220,45 @@ def test_itim_login_probe_records_critical_health_on_failure(monkeypatch):
         assert itim._latest_value(db, target.id, "up") == 0.0
     finally:
         db.close()
+
+
+def test_browser_failure_rule_never_mails_but_server_rules_do():
+    # Codex review: browser reports are unauthenticated, so they must not page.
+    import itim
+    assert "Login: Touch ID fejler i browseren" in itim._DEFAULT_RULES_NO_NOTIFY
+    assert "Login: serverfejl" not in itim._DEFAULT_RULES_NO_NOTIFY
+
+
+def test_effective_rp_ids_follow_the_webauthn_settings():
+    settings = {"webauthn_allowed_origins": "https://backend.timelapse-pro.dk:8443,https://timelapse.froekjaer.dk"}
+    get = lambda _db, key, default="": settings.get(key, default)
+    assert lh.effective_rp_ids(None, get) == {"timelapse-pro.dk", "timelapse.froekjaer.dk"}
+    settings.clear()
+    settings.update({"base_url": "https://backend.example.com", "webauthn_rp_id": "example.com"})
+    assert lh.effective_rp_ids(None, get) == {"example.com"}
+
+
+def test_rp_mismatch_counts_users_with_only_foreign_passkeys():
+    from database import Base, SessionLocal, User, WebAuthnCredential, engine
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        names = ("rp-ok", "rp-foreign", "rp-legacy")
+        db.query(User).filter(User.username.in_(names)).delete(synchronize_session=False)
+        db.commit()
+        users = {n: User(username=n, password_hash="x", role="viewer", is_active=True) for n in names}
+        db.add_all(users.values())
+        db.flush()
+        for name, rp in (("rp-ok", "example.com"), ("rp-foreign", "old.example"), ("rp-legacy", None)):
+            db.add(WebAuthnCredential(user_id=users[name].id, credential_id=name.encode(), public_key=b"k",
+                                      sign_count=0, rp_id=rp))
+        db.commit()
+        # rp-foreign is the only one of the three that cannot log in under example.com;
+        # adding its RP to the effective set removes exactly that one.
+        with_foreign = lh.passkey_rp_mismatch_users(db, {"example.com", "old.example"})
+        assert lh.passkey_rp_mismatch_users(db, {"example.com"}) == with_foreign + 1
+    finally:
+        db.query(WebAuthnCredential).filter(WebAuthnCredential.credential_id.in_([n.encode() for n in names])).delete(synchronize_session=False)
+        db.query(User).filter(User.username.in_(names)).delete(synchronize_session=False)
+        db.commit()
+        db.close()

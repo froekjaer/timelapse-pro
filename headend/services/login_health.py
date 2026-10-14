@@ -262,14 +262,27 @@ def probe_login(base_url: str, dial: str = "127.0.0.1", timeout: float = 5.0,
     return {"ok": True, "failed_step": None, "metrics": metrics}
 
 
-def passkey_rp_mismatch_users(db, rp_id: str) -> int:
-    """Active users whose passkeys are all bound to another RP ID — they can
-    only log in with a password here (the 2026-10-03 Safari cause)."""
+def effective_rp_ids(db, get_setting) -> set[str]:
+    """The RP IDs users actually authenticate against — the same resolution as
+    the WebAuthn endpoints (services.webauthn_origin): one per allowed origin
+    when an allow-list is configured, otherwise the configured/derived RP."""
+    from services.webauthn_origin import _csv_settings, _default_rp_id_for_origin, resolve_webauthn_settings
+
+    allowed = _csv_settings(get_setting(db, "webauthn_allowed_origins", os.environ.get("WEBAUTHN_ALLOWED_ORIGINS", "")))
+    if allowed:
+        return {_default_rp_id_for_origin(origin) for origin in allowed}
+    return {resolve_webauthn_settings(db, None, get_setting)[0]}
+
+
+def passkey_rp_mismatch_users(db, rp_ids: set[str]) -> int:
+    """Active users whose passkeys are all bound to an RP ID outside the
+    effective set — they can only log in with a password here (the
+    2026-10-03 Safari cause). Legacy rows without rp_id count as usable."""
     from database import User, WebAuthnCredential
 
     count = 0
     for user in db.query(User).filter(User.is_active.is_(True)).all():
         creds = db.query(WebAuthnCredential).filter_by(user_id=user.id).all()
-        if creds and not any((c.rp_id or rp_id) == rp_id for c in creds):
+        if creds and not any(c.rp_id is None or c.rp_id in rp_ids for c in creds):
             count += 1
     return count
