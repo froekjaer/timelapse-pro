@@ -1379,7 +1379,9 @@ def choose_focus_drive() -> bool:
         if value is None:
             print("Afbrudt")
             return False
-        return camera_set_config(path, value)
+        # Delegate to the shared focus path so Nikon Z30 receives its required
+        # MF/live-view transaction instead of a raw one-setting gphoto call.
+        return camera_focus_drive(value)
     print("Manual focus drive blev ikke fundet. Kamera/objektiv understoetter muligvis ikke remote focus.")
     return False
 
@@ -1567,6 +1569,26 @@ def camera_autofocus() -> bool:
 
 
 def camera_focus_drive(value: str) -> bool:
+    # Nikon Z30 exposes manualfocusdrive but accepts it only while its
+    # Live View focus mode is MF.  Keep setup, motor movement and shutdown
+    # in one gphoto2 process; leaving viewfinder enabled can strand a PTP
+    # session after the drive.  This is deliberately the same lifecycle as
+    # LAB mode and the technician service operation.
+    z30_context = "/main/capturesettings/liveviewaffocus"
+    if gphoto_config_exists(z30_context):
+        print("Nikon Z30: saetter manuel fokus, flytter objektivet og lukker Live View...")
+        result = run([
+            "gphoto2",
+            "--set-config", f"{z30_context}=Manual Focus (selection)",
+            "--set-config", "/main/actions/viewfinder=1",
+            "--set-config", f"/main/actions/manualfocusdrive={value}",
+            "--set-config", "/main/actions/viewfinder=0",
+        ], check=False, timeout=45)
+        if result.returncode == 0:
+            print("OK")
+            return True
+        print(result.stderr or result.stdout)
+        return False
     candidates = [
         "/main/actions/manualfocusdrive",
         "/main/actions/manualfocusdrive2",

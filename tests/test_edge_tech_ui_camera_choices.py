@@ -95,7 +95,6 @@ def test_manual_focus_uses_closed_z30_liveview_transaction(monkeypatch):
 
     assert result["ok"] is True and result["path"] == "/main/actions/manualfocusdrive"
     assert calls == [
-        (["--get-config", "/main/capturesettings/liveviewaffocus"], 8),
         ([
             "--set-config", "/main/capturesettings/liveviewaffocus=Manual Focus (selection)",
             "--set-config", "/main/actions/viewfinder=1",

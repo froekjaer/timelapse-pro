@@ -32,7 +32,7 @@ def _camera(monkeypatch, inputs):
         if cmd[:2] == ["gphoto2", "--list-all-config"]:
             return SimpleNamespace(returncode=0, stdout="".join(f"{path}\n{body}END\n" for path, body in Z30.items()), stderr="")
         if cmd[:2] == ["gphoto2", "--set-config"]:
-            sets.append(cmd[2])
+            sets.extend(cmd[2::2])
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -99,6 +99,12 @@ def test_set_path_list_hides_readonly_read_list_marks_it(monkeypatch, capsys):
 def test_focus_drive_uses_camera_range(monkeypatch, capsys):
     # Menu 5 → range prompt → 300 → back
     sets = _camera(monkeypatch, ["5", "300", "12"])
+    monkeypatch.setattr(cli, "gphoto_config_exists", lambda path: path in Z30)
     cli.camera_menu(Path("/tmp"))
     assert "Negativ = fokus naermere kameraet" in capsys.readouterr().out
-    assert sets == ["/main/actions/manualfocusdrive=300"]
+    assert sets == [
+        "/main/capturesettings/liveviewaffocus=Manual Focus (selection)",
+        "/main/actions/viewfinder=1",
+        "/main/actions/manualfocusdrive=300",
+        "/main/actions/viewfinder=0",
+    ]
