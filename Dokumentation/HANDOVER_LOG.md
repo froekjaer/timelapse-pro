@@ -29,6 +29,12 @@
 
 ## Log
 
+### Handover 2026-10-15 14:22 — fra Codex til Peter/næste session: Edge1 fysisk tekniker-CLI-fokus testet efter deploy
+
+- **Menu-bevis:** Gennem browserterminalen som lokal `servicetekniker` blev den absolutte scoped-sudo kommando kørt; hovedmenu **4 Fototeknik, kamera og testbilleder** startede den auditerede `cli:servicetekniker`-session og relæet. Kamera-menu **5 Manuel focus drive** viste kameraets interval −32767…32767. Værdien `500` gav præcis `Nikon Z30: saetter manuel fokus, flytter objektivet og lukker Live View...` efterfulgt af **`OK`**. Dette er den første isolerede, end-to-end bekræftelse af Edge1s nye CLI-fokussti.
+- **Genopretning og oprydning:** Fra samme menu gav punkt **4 Autofokus** `/main/actions/autofocusdrive = 1` efterfulgt af **`OK`**. Punkt **12 Tilbage** skrev `Camera relay FORCE OFF (pin 356)`; punkt **8 Afslut** returnerede til `servicetekniker@timelapse0101`. Kameraet/Live View er dermed ikke efterladt i en aktiv servicesession.
+- **GUI-afgrænsning:** CLI-menuens lokale GUI-adresse er den TOTP-beskyttede `https://192.168.42.1:8443`. Denne Mac kan ikke route til hverken Edge1s LAN `192.168.86.134:8443` eller AP-adressen, så GUI-fokus er ikke kliktestet i denne session. Den skal testes fra en tekniker-enhed, der er på Edge1s lokale net/AP og er TOTP-logget ind: gennemfør samme manuelle `500` og AF, og afslut derefter sessionen. Ingen sikkerhedsbarriere eller netværkskonfiguration blev omgået.
+
 ### Handover 2026-10-15 14:18 — fra Codex til Peter/næste session: Edge1 Z30-fokusrettelse deployet gennem governed flow
 
 - **Godkendelse og afgrænsning:** Peter godkendte den eksisterende kandidat **#343** i Headend UI. Change ticket `TL-CHG-20261015-00343` gjaldt udelukkende `TL-C87FF9587CA0` (Edge1/Kamera 1) i dens håndhævede `lab`-miljø. Artifactet var `TL-ART-20261014-f996c5c0389e` / `v2.8.1-lab.68` / `f996c5c0389e2ab5d8c29bcb718f4581439fc3c3`, GPG-signeret af `165C4D4D88F4B07487F3D7DFF75C248F694C097F`; ingen direkte filkopiering eller database-bypass blev brugt.
