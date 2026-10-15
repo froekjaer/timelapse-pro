@@ -29,6 +29,11 @@
 
 ## Log
 
+### Handover 2026-10-15 14:37 — fra Codex til Peter/næste session: Edge1 LAB-fokus verficeret efter fokusrettelse
+
+- **LAB-forløb:** På `TL-C87FF9587CA0` startede Headend LAB normalt gennem reverse-tunnelen og nåede **Lab klar** med Nikon Z30-profilen. Med LAB-værdien `500` gav **Step focus** `focus_drive · OK`, et nyt preview og lokal QA **Blur 2150.0 / Lys 108.6 / ok**. Den efterfølgende **Autofocus test** gav `autofocus · OK` med samme score. Det bekræfter den samme Z30-transaktion som den lokale CLI gennem hele Headend → Edge → LAB → gphoto2-vejen.
+- **Afslutning:** LAB blev stoppet i UI bagefter; UI viser igen *Lab mode er ikke aktiv*. Læsende `--service-status` efter stop bekræftede ingen session, `camera relay: OFF`, `Live View: OFF` og `Config dirty: 0`; `timelapse-edge` er aktiv. Kameraet blev ikke efterladt tændt.
+
 ### Handover 2026-10-15 14:22 — fra Codex til Peter/næste session: Edge1 fysisk tekniker-CLI-fokus testet efter deploy
 
 - **Menu-bevis:** Gennem browserterminalen som lokal `servicetekniker` blev den absolutte scoped-sudo kommando kørt; hovedmenu **4 Fototeknik, kamera og testbilleder** startede den auditerede `cli:servicetekniker`-session og relæet. Kamera-menu **5 Manuel focus drive** viste kameraets interval −32767…32767. Værdien `500` gav præcis `Nikon Z30: saetter manuel fokus, flytter objektivet og lukker Live View...` efterfulgt af **`OK`**. Dette er den første isolerede, end-to-end bekræftelse af Edge1s nye CLI-fokussti.
