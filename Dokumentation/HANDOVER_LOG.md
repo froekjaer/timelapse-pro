@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-10-15 14:18 — fra Codex til Peter/næste session: Edge1 Z30-fokusrettelse deployet gennem governed flow
+
+- **Godkendelse og afgrænsning:** Peter godkendte den eksisterende kandidat **#343** i Headend UI. Change ticket `TL-CHG-20261015-00343` gjaldt udelukkende `TL-C87FF9587CA0` (Edge1/Kamera 1) i dens håndhævede `lab`-miljø. Artifactet var `TL-ART-20261014-f996c5c0389e` / `v2.8.1-lab.68` / `f996c5c0389e2ab5d8c29bcb718f4581439fc3c3`, GPG-signeret af `165C4D4D88F4B07487F3D7DFF75C248F694C097F`; ingen direkte filkopiering eller database-bypass blev brugt.
+- **Runtime-evidens:** Edge1 modtog Headend wake, accepterede policy, uploadede pre-update-backup `timelapse-edge-backup-TL-C87FF9587CA0-20261015_121558.tar.gz` (7382 KB), hentede artifactet og rapporterede `deployed` med `post_restart_health_confirmed` 14:18:34. CMDB rapporterer nu `f996c5c0…`; `timelapse-edge` er aktiv og reverse-tunnel port 2201 kom op igen.
+- **Fokus-kontrakt efter deploy:** Læsende SSH-kontrol af den installerede runtime bekræftede `camera_focus_drive()` med den fælles Nikon Z30-livscyklus `liveviewaffocus=Manual Focus (selection)` → `viewfinder=1` → `manualfocusdrive=<værdi>` → `viewfinder=0`. Driveren har også `manual_focus_cleanup` (`viewfinder=0`). Kameraet var derefter slukket (`relay OFF`, `Live View OFF`); ingen fokusbevægelse blev udført under deployment.
+- **Næste skridt:** Peter logger igen lokalt ind som `servicetekniker` på Edge1. Fra hovedmenu: **4 Fototeknik, kamera og testbilleder** → **5 Manuel focus drive** → `500`; behold hele outputtet med afsluttende `OK` og observer objektivet. Kør derefter punkt **4 Autofokus**, gå tilbage og afslut, så relæet igen viser `FORCE OFF`. Udfør samme gennem Edge-GUI efter CLI-beviset.
+
 ### Handover 2026-10-15 11:45 — fra Codex til Peter/næste session: Edge1 teknikerkonsol klargjort; ISO-regel verificeret
 
 - **Edge1 least privilege og menu:** På fysisk Edge1 (`TL-C87FF9587CA0`) manglede det ældre image samme ISO-definerede, snævre sudoers-regel som Edge2. Efter Peters godkendelse blev `/etc/sudoers.d/servicetekniker` installeret med kun `/opt/timelapse/venv/bin/python3 /opt/timelapse/edge/tools/bootstrap_cli.py*` som passwordløs root-kommando, mode 0440; `visudo -cf` svarede `parsed OK`. Som `servicetekniker` åbnede den absolutte kommando den interaktive CLI, og punkt **4 Fototeknik, kamera og testbilleder** åbnede kamera-menuen.
