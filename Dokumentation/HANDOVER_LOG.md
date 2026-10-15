@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-10-15 15:07 — fra Codex til Peter/næste session: samtidig fysisk Edge1/Edge2-kamerakonfigurationssammenligning
+
+- **Frisk læsende evidens:** LAB *Hent parametre* blev kørt mod begge Nikon Z30 uden fokusbevægelse; begge scans har 368 parametre. Edge1 (`TL-C87FF9587CA0`) er tidsstemplet `13:06:28Z`, Edge2 (`TL-043EB9E72EFD`) `13:07:30Z`. Edge2-LAB blev stoppet igen. Edge1 service-status ved afslutning: ingen servicesession, relay/Live View OFF.
+- **Fokusrelevant drift:** Edge1: `focusmode=AF-A` (read-only), `liveviewaffocus=Unknown value 0005` (skrivbar), `/main/other/d0cd=0`. Edge2: `focusmode=Manual` (read-only), `liveviewaffocus=Manual Focus (selection)`, `d0cd=1`. Begge har samme PTP-actions (`manualfocusdrive`, `autofocusdrive`, `viewfinder`) og neutrale værdier (`manualfocusdrive=0`, `autofocusdrive=0`, `viewfinder=0`, `changeafarea=0x0`). `d0cd` er tidligere identificeret som Nikon Z30's *Save focus position*; Edge1s `0` og AF-A/ukendt live-view-værdi er derfor en stærk, men endnu ikke alene fysisk bevist, forklaring på fokusdrift over relay-strømcyklusser.
+- **Andre aktuelle forskelle:** Edge1 er 1/160 s, f/4.2, ISO 100, EV 0, JPEG Normal; Edge2 er 1/500 s, f/3.5, ISO 100, EV +0.333, JPEG Fine. Lukkerforskellen kan påvirke bevægelsesuskarphed og dermed vurderingen af skarphed, men flytter ikke objektivets fokus. Hvidbalance er Auto på begge. Ingen indstillinger blev ændret i denne sammenligning.
+- **Næste beslutning:** Hvis Peter ønsker ens drift, fastlæg først en eksplicit Edge1-profil (mindst `liveviewaffocus=Manual Focus (selection)` og `d0cd=1`; eventuelt 1/500/JPEG Fine), anvend den kontrolleret gennem LAB/konfiguration, og bekræft med capture før/efter relay-cycle. Skriv ikke `Unknown value 0005` over med et gæt.
+
 ### Handover 2026-10-15 14:37 — fra Codex til Peter/næste session: Edge1 LAB-fokus verficeret efter fokusrettelse
 
 - **LAB-forløb:** På `TL-C87FF9587CA0` startede Headend LAB normalt gennem reverse-tunnelen og nåede **Lab klar** med Nikon Z30-profilen. Med LAB-værdien `500` gav **Step focus** `focus_drive · OK`, et nyt preview og lokal QA **Blur 2150.0 / Lys 108.6 / ok**. Den efterfølgende **Autofocus test** gav `autofocus · OK` med samme score. Det bekræfter den samme Z30-transaktion som den lokale CLI gennem hele Headend → Edge → LAB → gphoto2-vejen.
