@@ -6,6 +6,7 @@
 // Nikon Z30 sets shutter speed via /main/capturesettings/shutterspeed2.
 import { useEffect, useState } from 'react'
 import { getDeviceRawConfig } from '../api/client'
+import { prettyShutter } from './cameraHelp'
 
 export interface ScannedParam {
   path: string
@@ -94,10 +95,9 @@ export function cameraOptionsFor(scan: CameraScan | null, configKey: string, cur
 
 /** Readable label for a camera value, e.g. "0.0020s" → "0.0020s (≈ 1/500)". */
 export function optionLabel(value: string): string {
-  const m = /^(\d*\.\d+)s$/.exec(value)
-  if (!m) return value
-  const sec = parseFloat(m[1])
-  return sec > 0 && sec < 1 ? `${value} (≈ 1/${Math.round(1 / sec)})` : value
+  // Lukkertid vises som brøk (1/40) frem for komma-decimal (0,0250s).
+  if (/^\d+(?:[.,]\d+)?\s*s$/i.test(value.trim())) return prettyShutter(value)
+  return value
 }
 
 export function scanAge(scan: CameraScan | null): string {

@@ -5,6 +5,7 @@ import { ArrowLeft, Building2, MapPin, Camera, Save, Trash2, ChevronRight,
 import { getApiUrl, pathSegment } from '../api/client'
 import { InfoTooltip } from '../components/InfoTooltip'
 import { useCameraScan, scannedParamFor, cameraOptionsFor, optionLabel, scanAge } from '../lib/cameraScan'
+import { helpFor } from '../lib/cameraHelp'
 import { CommandBuilder } from '../components/CameraCommandBuilder'
 
 function api(path: string, opts?: RequestInit) {
@@ -871,8 +872,8 @@ export function CameraPage() {
                 <div key={param.key}>
                   <div className="flex items-center gap-2 mb-1">
                     <label className="text-xs text-gray-500 font-medium">{param.label}</label>
-                    {param.tooltip && (
-                      <InfoTooltip text={param.tooltip} label={param.label} />
+                    {(param.tooltip || helpFor(param.key)) && (
+                      <InfoTooltip text={param.tooltip || helpFor(param.key) || ''} label={param.label} />
                     )}
                     {param.unit && <span className="text-xs text-gray-300">{param.unit}</span>}
                     {val && <span className="text-xs text-sky-500 font-medium">● Override aktiv</span>}
