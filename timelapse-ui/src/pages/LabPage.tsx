@@ -24,6 +24,7 @@ import {
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
 import { InfoTooltip } from '../components/InfoTooltip'
+import { PARAM_HELP as PARAM_DESCRIPTIONS, prettyValue, EDITABLE_TEXT } from '../lib/cameraHelp'
 import { LabStartProgress } from '../components/LabStartProgress'
 // // import { useWebRTC } from '../hooks/useWebRTC' // F-013B/C: Replaced with Frame Push
 
@@ -55,51 +56,23 @@ function readLabState(data: any) {
 
 // ── Kamera-parameter grupper ──────────────────────────────────────────────────
 const PARAM_GROUPS: Record<string, string[]> = {
-  'Eksponering':    ['/main/capturesettings/autoexposuremode', '/main/capturesettings/shutterspeed',
-                    '/main/capturesettings/aperture', '/main/capturesettings/exposurecompensation',
-                    '/main/capturesettings/meteringmode'],
-  'ISO & Lys':      ['/main/imgsettings/iso', '/main/imgsettings/whitebalance',
-                    '/main/capturesettings/picturestyle'],
-  'Billedkvalitet': ['/main/imgsettings/imageformat', '/main/imgsettings/colorspace'],
-  'Fokus':          ['/main/capturesettings/focusmode', '/main/actions/manualfocusdrive',
-                    '/main/actions/autofocusdrive'],
-  'Kamera-styring': ['/main/settings/capturetarget', '/main/settings/reviewtime',
-                    '/main/actions/syncdatetime'],
+  'Eksponering':    ['/main/capturesettings/shutterspeed2', '/main/capturesettings/shutterspeed',
+                    '/main/capturesettings/f-number', '/main/capturesettings/exposurecompensation',
+                    '/main/capturesettings/exposuremetermode', '/main/capturesettings/longexpnr'],
+  'ISO & Lys':      ['/main/imgsettings/iso', '/main/imgsettings/isoauto', '/main/imgsettings/autoiso',
+                    '/main/imgsettings/whitebalance'],
+  'Billedkvalitet': ['/main/imgsettings/imagequality', '/main/imgsettings/imagesize', '/main/imgsettings/colorspace'],
+  'Fokus':          ['/main/capturesettings/liveviewaffocus', '/main/capturesettings/focusmode'],
+  'System':         ['/main/settings/capturetarget', '/main/settings/recordingmedia', '/main/settings/autofocus',
+                    '/main/settings/flickerreduction', '/main/settings/imagecommentenable',
+                    '/main/settings/imagecomment', '/main/settings/artist', '/main/settings/copyright'],
   'Status':         ['/main/status/batterylevel', '/main/status/shuttercounter',
-                    '/main/status/availableshots', '/main/status/lensname',
-                    '/main/status/cameramodel'],
+                    '/main/status/availableshots', '/main/status/lensname', '/main/status/cameramodel'],
 }
 
 // ── Parameter beskrivelser (tooltips) ───────────────────────────────────────────
-const PARAM_DESCRIPTIONS: Record<string, string> = {
-  // Eksponering
-  '/main/capturesettings/autoexposuremode': 'Eksponeringsmode. I Auto/Program styrer kameraet lukker/blænde automatisk. I Manual (M) har du fuld kontrol. Shutter/Aperture priority giver delvis kontrol.',
-  '/main/capturesettings/shutterspeed': 'Lukkerhastighed i sekunder eller brøk (f.eks. 1/125). Hurtig = fryser bevægelse, langsom = motion blur. Kræver Manual eller Shutter Priority mode.',
-  '/main/capturesettings/aperture': 'Blændeåbning (f-tal). Lav (f/3.5) = lysstærk + lille dybdeskarphed. Høj (f/11) = stor dybdeskarphed. Kræver Manual eller Aperture Priority mode.',
-  '/main/capturesettings/exposurecompensation': 'EV kompensation ±. Justerer eksponering op/ned fra kameraets automatiske måling. Fungerer i alle auto/semi-auto modes.',
-  '/main/capturesettings/meteringmode': 'Lysmåling. Matrix evaluere hele scenen. Center-weightet fokus på midten. Spot måler lille område omkring fokuspunkt.',
-  // ISO & Lys
-  '/main/imgsettings/iso': 'ISO følsomhed. Lav (100) = mindre støj men kræver lys. Høj (3200+) til svagt lys men introducerer støj/grain.',
-  '/main/imgsettings/whitebalance': 'Hvidbalance. Auto justerer farvetemperatur automatisk. Daylight (5500K) til sol, Tungsten (3200K) til indendørs belysning.',
-  '/main/capturesettings/picturestyle': 'Farveprofil. Neutral/Standard til timelapse (bedre post-processing). Landscape/Vivid øger mætning.',
-  // Billedkvalitet
-  '/main/imgsettings/imageformat': 'Filformat. RAW til fuld kontrol (stor fil). JPEG til komprimering. RAW+JPEG begge dele.',
-  '/main/imgsettings/colorspace': 'Farverum. sRGB til skærme/web. Adobe RGB til print.',
-  // Fokus
-  '/main/capturesettings/focusmode': 'Fokusmode. Manual = du styrer. Autofokus = kameraet finder fokus. Kan være readonly hvis optaget ikke understøttes.',
-  '/main/actions/manualfocusdrive': 'Manuel fokusjustering. Flytter fokus trinvis (-5 til +5). Brug til fine-tuning.',
-  '/main/actions/autofocusdrive': 'Autofokus trigger. Kameraet søger og låser fokus automatisk.',
-  // Kamera-styring
-  '/main/settings/capturetarget': 'Hvor billeder gemmes. SD kort eller intern hukommelse.',
-  '/main/settings/reviewtime': 'Hvor længe billedet vises på skærmen efter capture. 0-10 sekunder.',
-  '/main/actions/syncdatetime': 'Synkroniser kameraets dato/tid med systemet.',
-  // Status
-  '/main/status/batterylevel': 'Batteriniveau i procent.',
-  '/main/status/shuttercounter': 'Antal lukkercyklinger (total levetid).',
-  '/main/status/availableshots': 'Estimerede billeder remaining på SD kort.',
-  '/main/status/lensname': 'Navn på objektivet.',
-  '/main/status/cameramodel': 'Kamera model.',
-}
+// PARAM_DESCRIPTIONS importeres nu fra ../lib/cameraHelp (manual-forankret)
+
 
 // ── Eksponeringsmode matrix ─────────────────────────────────────────────────────
 // Viser hvilke parametre der er editable i hvilke modes
@@ -210,7 +183,7 @@ function ParamRow({
     }
   }
 
-  const isReadonly = param.readonly || param.type === 'TEXT'
+  const isReadonly = param.readonly || (param.type === 'TEXT' && !EDITABLE_TEXT.has(param.path))
   const usableChoices = param.choices.filter(c => c.label && !/^unknown$/i.test(c.label.trim()))
   const hasChoices = usableChoices.length > 0
   const paramDesc = PARAM_DESCRIPTIONS[param.path]
@@ -244,7 +217,7 @@ function ParamRow({
           <>
             <span className={`text-sm px-2 py-0.5 rounded font-mono ${
               isReadonly ? 'text-gray-400 bg-gray-50' : 'text-sky-700 bg-sky-50'
-            }`}>{param.current || '–'}</span>
+            }`}>{prettyValue(param.path, param.current) || '–'}</span>
             {!isReadonly && (
               <button onClick={() => { setValue(param.current); setEditing(true) }}
                 className="p-1 text-gray-400 hover:text-sky-600 rounded">
@@ -258,7 +231,7 @@ function ParamRow({
               <select value={value} onChange={e => setValue(e.target.value)}
                 className="text-sm border border-sky-300 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400">
                 {usableChoices.map(c => (
-                  <option key={c.index} value={c.label}>{c.label}</option>
+                  <option key={c.index} value={c.label}>{prettyValue(param.path, c.label)}</option>
                 ))}
               </select>
             ) : (
