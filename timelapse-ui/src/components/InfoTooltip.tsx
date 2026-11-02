@@ -24,7 +24,7 @@ export function InfoTooltip({ text, label = 'Forklaring' }: { text: string; labe
       </button>
       <span
         role="tooltip"
-        className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1.5 w-72 max-w-xs -translate-x-1/2 whitespace-pre-line rounded-lg bg-slate-900 px-3 py-2 text-left text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl ring-1 ring-slate-700 transition-opacity group-hover/tt:visible group-hover/tt:opacity-100 group-focus-within/tt:visible group-focus-within/tt:opacity-100"
+        className="pointer-events-none invisible absolute left-0 top-full z-50 mt-1.5 w-72 max-w-xs whitespace-pre-line rounded-lg bg-slate-900 px-3 py-2 text-left text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl ring-1 ring-slate-700 transition-opacity group-hover/tt:visible group-hover/tt:opacity-100 group-focus-within/tt:visible group-focus-within/tt:opacity-100"
       >
         {text}
       </span>
