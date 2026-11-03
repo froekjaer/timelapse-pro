@@ -204,7 +204,6 @@ export function CameraPage() {
   // Edge reports a device-wide primary-upload backlog; never imply per-camera
   // attribution when several cameras share the same Edge.
   const [uploadQueue, setUploadQueue] = useState<{ count: number | null; recordedAt: string | null } | null>(null)
-  const [queueCheckedAt, setQueueCheckedAt] = useState(0)
   const [queueUnavailable, setQueueUnavailable] = useState(false)
   useEffect(() => {
     if (!deviceId) return
@@ -219,9 +218,8 @@ export function CameraPage() {
           recordedAt: typeof d?.recorded_at === 'string' ? d.recorded_at : null,
         })
         setQueueUnavailable(false)
-        setQueueCheckedAt(Date.now())
       } catch {
-        if (active) { setQueueUnavailable(true); setQueueCheckedAt(Date.now()) }
+        if (active) setQueueUnavailable(true)
       }
     }
     void refresh()
