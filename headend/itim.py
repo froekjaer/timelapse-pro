@@ -455,7 +455,8 @@ def _probe_edge_from_diagnostics(db: Session) -> None:
                 rec = rec.replace(tzinfo=timezone.utc)
             age = (_now() - rec).total_seconds()
             m["last_seen_age_s"] = age
-            m["up"] = 1.0 if age < 1800 else 0.0
+            from connectivity import OFFLINE_MIN_AGE_S
+            m["up"] = 1.0 if age <= OFFLINE_MIN_AGE_S else 0.0
         record_metrics(db, f"edge:{did}", "edge", m, device_id=did, scope="edge",
                        display_name=did)
 

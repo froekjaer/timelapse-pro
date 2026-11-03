@@ -437,22 +437,10 @@ def _pending_environment(inv: DeviceInventory) -> str:
 
 
 def _display_device_status(device: Device | None) -> str:
-    if not device:
-        return "unknown"
-    raw_status = device.status or "unknown"
-    if raw_status in {"provisioning", "import", "unknown"}:
-        return raw_status
-    if not device.last_seen:
-        return "offline"
-    last_seen = device.last_seen
-    if last_seen.tzinfo is None:
-        last_seen = last_seen.replace(tzinfo=timezone.utc)
-    age_s = (now_utc() - last_seen).total_seconds()
-    if age_s < 15 * 60:
-        return "online"
-    if age_s < 24 * 3600:
-        return "stale"
-    return "offline"
+    # Phase 3: single authoritative connectivity calculation (freshness-based),
+    # shared with main.py/ITIM. Lifecycle/semantic states pass through there.
+    from connectivity import display_status
+    return display_status(device)
 
 
 def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceInventory, payload: dict) -> None:

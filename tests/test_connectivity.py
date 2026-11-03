@@ -1,0 +1,85 @@
+"""Phase 3: unit tests for the central authoritative connectivity calculation.
+
+Regression anchor: a persisted status="online" whose last observation is hours
+old MUST compute as offline (the Edge2 defect). Pure functions; no DB/HTTP.
+"""
+from datetime import datetime, timedelta, timezone
+
+import connectivity as C
+
+NOW = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def ago(seconds):
+    return NOW - timedelta(seconds=seconds)
+
+
+def test_connectivity_state_thresholds():
+    assert C.connectivity_state(ago(0), NOW) == "online"
+    assert C.connectivity_state(ago(599), NOW) == "online"
+    assert C.connectivity_state(ago(600), NOW) == "online"     # boundary <= 10 min
+    assert C.connectivity_state(ago(601), NOW) == "stale"
+    assert C.connectivity_state(ago(900), NOW) == "stale"      # boundary <= 15 min
+    assert C.connectivity_state(ago(901), NOW) == "offline"
+    assert C.connectivity_state(None, NOW) == "unknown"
+
+
+def test_future_receipt_is_unknown_not_online():
+    # Clock skew / replay: a future receipt time must never read as online.
+    assert C.connectivity_state(NOW + timedelta(seconds=30), NOW) == "unknown"
+
+
+def test_naive_datetime_treated_as_utc():
+    assert C.connectivity_state(datetime(2026, 11, 3, 11, 59, 0), NOW) == "online"
+
+
+def test_is_up_online_and_stale_are_up_offline_is_not():
+    assert C.is_up(ago(0), NOW) is True
+    assert C.is_up(ago(700), NOW) is True      # stale still counts as up
+    assert C.is_up(ago(1000), NOW) is False
+    assert C.is_up(None, NOW) is False
+
+
+class _Dev:
+    def __init__(self, status=None, last_seen=None):
+        self.status = status
+        self.last_seen = last_seen
+
+
+def test_display_status_passthrough_lifecycle_states():
+    for st in ("provisioning", "import", "unknown"):
+        # even with an ancient last_seen, lifecycle/semantic states pass through
+        assert C.display_status(_Dev(status=st, last_seen=ago(10_000_000)), NOW) == st
+
+
+def test_display_status_none_device():
+    assert C.display_status(None, NOW) == "unknown"
+
+
+def test_display_status_no_last_seen_is_offline():
+    assert C.display_status(_Dev(status="online", last_seen=None), NOW) == "offline"
+
+
+def test_display_status_fresh_is_online():
+    assert C.display_status(_Dev(status="online", last_seen=ago(60)), NOW) == "online"
+
+
+def test_edge2_regression_persisted_online_but_stale_is_offline():
+    # Edge2 (TL-043EB9E72EFD): status persisted "online", last observed ~87h ago.
+    dev = _Dev(status="online", last_seen=ago(87 * 3600))
+    assert C.display_status(dev, NOW) == "offline"
+
+
+def test_status_changes_as_time_passes_without_new_message():
+    dev = _Dev(status="online", last_seen=NOW)
+    assert C.display_status(dev, NOW) == "online"
+    assert C.display_status(dev, NOW + timedelta(minutes=12)) == "stale"
+    assert C.display_status(dev, NOW + timedelta(minutes=20)) == "offline"
+
+
+def test_thresholds_are_configurable(monkeypatch):
+    monkeypatch.setattr(C, "ONLINE_MAX_AGE_S", 60)
+    monkeypatch.setattr(C, "OFFLINE_MIN_AGE_S", 120)
+    assert C.connectivity_state(ago(30), NOW) == "online"
+    assert C.connectivity_state(ago(90), NOW) == "stale"
+    assert C.connectivity_state(ago(130), NOW) == "offline"
