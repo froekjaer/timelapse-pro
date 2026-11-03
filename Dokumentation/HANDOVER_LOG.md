@@ -29,6 +29,19 @@
 
 ## Log
 
+
+### Handover 2026-11-03 — fra Claude til Peter/Codex
+- Hvad er gjort:
+  - LAB UI forbedret: manual-forankrede danske hjælpetekster (Nikon Z30-referencevejledning), dropdowns frem for fri-tekst hvor muligt, lukkertid som brøk (1/40), tooltip-positionsfix, og LAB full-capture timeout hævet (falsk "Fejl ved capture"). Merged til main: PR #306 (cameraHelp.ts + LabPage/CameraPage/cameraScan), #307 (tooltip), #308 (capture-timeout).
+  - Phase 1-3 READ-ONLY reliability-undersøgelse (edge filsystem/power-loss, reboot-lifecycle, online/offline-status). Fuld dansk vurdering leveret: `outputs/edge_reliability_assessment_2026-11-03.md`. INGEN kodeændring i reliability-sporet.
+- Verificerede nøglefund:
+  - Edge1: ét ext4 `rw` rod på consumer-NVMe (GIGABYTE GP-GSM2NE3128GNTD 128GB), `commit=600` (10-min flush → op til 10 min writes tabt ved strømtab), INTET separat `/data` (alt på roden), kun `/var/log`(zram)/`/tmp`/swap i RAM, ingen overlayroot/RO-rod. `build_edge_disk_image.py` bygger rootfs-tarball uden RO-rod.
+  - SQLite WAL + `synchronous=NORMAL` (konsistent, men sidste commits ikke durable ved strømtab). Capture bruger atomic rename, men filen er ikke garanteret fsync'et pga. commit=600.
+  - Phase 2: rent tidsbaseret suppression (`/etc/timelapse/maintenance-until`, 20 min, fejler åbent); ingen reboot-tilstandsmaskine/reboot_id/headend-ack. Headendens natlige "reboot" er pt. soft service-kickstart (FileVault-blocker), ikke fuld OS-reboot.
+  - Phase 3 DEFEKT reproduceret live: Edge2 (TL-043EB9E72EFD) `status="online"` mens `last_seen` er ~87 timer gammel. Rå `device.status` læses i `main.py` (L3063/5813/5900/14295) i stedet for `_display_device_status` (15min/24t). ITIM bruger en tredje tærskel (30 min, `itim.py:458`). Tre inkonsistente kilder.
+- Hvad mangler / næste skridt: Afventer Peters godkendelse på 6 beslutningspunkter (filsystem-retning A→C; ISO/image-generator-ændringer; `commit`/`synchronous`; connectivity-tærskler 10/15 min; reboot sikker-policy ved manglende ack; start med Phase 3 som første ikke-destruktive leverance). Stop før implementering jf. arbejdsordren.
+- Kommandoer kørt: read-only SSH/psql på headend + Edge1. Edge2 offline (tunnel 2204 refused) — ikke runtime-inspiceret.
+
 ### Handover 2026-10-13 — fra Claude til Peter/næste session: Touch ID-login i Safari — rodårsager rettet
 
 - **Peter:** "Touch-id SKAL virke" / "Du må ikke lave en fall-back løsning for at skjule en dårlig kode."
