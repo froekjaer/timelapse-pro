@@ -201,6 +201,34 @@ export function CameraPage() {
   const navigate = useNavigate()
   const cameraScan = useCameraScan(deviceId)
   const [device, setDevice]           = useState<CameraDevice | null>(null)
+  // Edge reports a device-wide primary-upload backlog; never imply per-camera
+  // attribution when several cameras share the same Edge.
+  const [uploadQueue, setUploadQueue] = useState<{ count: number | null; recordedAt: string | null } | null>(null)
+  const [queueUnavailable, setQueueUnavailable] = useState(false)
+  useEffect(() => {
+    if (!deviceId) return
+    let active = true
+    const refresh = async () => {
+      try {
+        const result = await api(`/api/admin/devices/${pathSegment(deviceId)}`)
+        if (!active) return
+        const d = result.diagnostics
+        setUploadQueue({
+          count: typeof d?.upload_queue === 'number' && Number.isInteger(d.upload_queue) && d.upload_queue >= 0 ? d.upload_queue : null,
+          recordedAt: typeof d?.recorded_at === 'string' ? d.recorded_at : null,
+        })
+        setQueueUnavailable(false)
+      } catch {
+        if (active) setQueueUnavailable(true)
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => { void refresh() }, 30000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [deviceId])
+  const queueAge = uploadQueue?.recordedAt ? Date.now() - new Date(uploadQueue.recordedAt + (/[zZ]|[+-]\\d\\d:\\d\\d$/.test(uploadQueue.recordedAt) ? '' : 'Z')).getTime() : NaN
+  const queueFresh = !queueUnavailable && Number.isFinite(queueAge) && queueAge >= -60000 && queueAge <= 15 * 60 * 1000
+
   const [loading, setLoading]         = useState(true)
   const [saving, setSaving]           = useState(false)
   const [saved, setSaved]             = useState(false)
@@ -654,6 +682,29 @@ export function CameraPage() {
           {error} <button onClick={() => setError(null)} className="ml-2 underline">Luk</button>
         </div>
       )}
+
+      {/* Primary upload backlog, sampled from the Edge's last diagnostic. */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4" aria-live="polite">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs text-gray-500">Billeder der mangler overførsel</p>
+            <p className="text-2xl font-semibold text-gray-800">
+              {uploadQueue?.count == null ? 'Ukendt' : uploadQueue.count.toLocaleString('da-DK')}
+              {uploadQueue?.count != null && !queueFresh && <span className="text-sm font-normal text-amber-700 ml-2">(sidst kendt)</span>}
+            </p>
+          </div>
+          <span className={`text-xs rounded-full px-2.5 py-1 ${queueFresh ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+            {queueFresh ? 'Aktuel måling' : 'Afventer ny måling'}
+          </span>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          {uploadQueue?.recordedAt && Number.isFinite(queueAge)
+            ? `Seneste Edge-måling: ${new Date(Date.now() - queueAge).toLocaleString('da-DK')}`
+            : 'Ingen tidsstemplet Edge-måling'}
+          {' · '}Primær uploadkø for hele Edge-enheden (ikke nødvendigvis kun dette kamera).
+          {queueUnavailable && ' · Kunne ikke opdatere status.'}
+        </p>
+      </div>
 
       {/* Status kort */}
       <div className="grid grid-cols-3 gap-3 mb-5">

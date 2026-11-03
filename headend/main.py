@@ -13558,6 +13558,7 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
             "ssd_free_gb":         diag.ssd_free_gb,
             "service_restarts":    diag.service_restarts,
             "upload_queue":        diag.upload_queue,
+            "recorded_at":         diag.recorded_at.isoformat() if diag.recorded_at else None,
             "cam_battery_pct":     diag.cam_battery_pct,
             "cam_shutter_cnt":     diag.cam_shutter_cnt,
             "cam_shutter_pct":     diag.cam_shutter_pct,
