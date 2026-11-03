@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-14 — fra Claude til Peter/næste session: Touch ID i Safari — RIGTIG årsag var LastPass-udvidelsen
+
+- **Peter 2026-10-13:** "LASTPASS er noget hø … Alt virker når jeg slår tilføjelsen fra." Bekræftet uafhængigt af TimeLapse på webauthn.io (1. gang virker, 2. gang hænger med LastPass slået til).
+- **Fundet via #303:** login-sidens fejlrapport `stage=touch-id name=Error … svarede ikke` (75 s-grænsen) — Safari svarede aldrig, intet i macOS-loggen.
+- **Konsekvens for tidligere forklaringer:** "hængende helper" (9/10) og "cooldown" (11/10) var med stor sandsynlighed samme årsag. #302 (én forespørgsel ad gangen, Touch ID direkte i klikket) er stadig Apple-anbefalet praksis; AutoFill blev fjernet på et forkert grundlag og kan genindføres efter Safari-test uden LastPass.
+- **Denne PR:** FAQ-afsnit "Touch ID virker ikke i Safari" (Hjælp → FAQ) + login-sidens fejltekst peger på adgangskode-manager-udvidelsen, når Touch ID ikke svarer/afvises.
+- **Status:** merged? NEJ. Deployet? NEJ.
+
 ### Handover 2026-10-13 — fra Claude til Peter/næste session: Touch ID-login i Safari — rodårsager rettet
 
 - **Peter:** "Touch-id SKAL virke" / "Du må ikke lave en fall-back løsning for at skjule en dårlig kode."

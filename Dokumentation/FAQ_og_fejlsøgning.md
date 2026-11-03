@@ -16,6 +16,31 @@ tværs af sessioner). Symptom → hurtig diagnose → løsning. Detaljer i
 
 ---
 
+## "Touch ID virker ikke i Safari" (intet Touch ID-vindue, eller kun første gang)
+
+**Mest sandsynlige årsag: en adgangskode-manager-udvidelse i Safari** — fx **LastPass**,
+1Password, Bitwarden eller Dashlane. Udvidelsen griber ind i Safaris passkey-forespørgsel;
+typisk virker Touch ID første gang og derefter ikke, eller Touch ID-vinduet kommer slet ikke.
+Fundet 2026-10-13: LastPass-udvidelsen var årsagen, og alt virkede, da den blev slået fra.
+
+**Sådan løser du det:**
+1. Safari → **Indstillinger** → **Udvidelser**.
+2. Fjern fluebenet ved adgangskode-manageren (fx LastPass).
+3. Genindlæs login-siden (**Cmd+Shift+R**) og tryk **Log ind med Windows Hello / Touch ID**.
+
+**Hurtig test, hvis du er i tvivl:** åbn et privat vindue (**Cmd+Shift+N**) og log ind der —
+udvidelser er normalt slået fra i private vinduer. Virker Touch ID dér, er det en udvidelse.
+
+**Virker det stadig ikke?**
+- Har du en passkey til *dette* domæne? En passkey oprettet på et andet domæne
+  (fx det gamle timelapse.froekjaer.dk) virker ikke her — opret en ny under din profil.
+- Hænger det, også uden udvidelser: genstart Mac'en og vent et par minutter, før du prøver
+  (iCloud-nøgleringen skal være startet).
+- For administratorer: login-siden sender browserens præcise fejl til Headend-loggen
+  (`grep "Login client report" ~/Library/Logs/timelapse-headend.log`).
+
+---
+
 ## "Jeg kan ikke logge ind"
 
 **Hurtig diagnose — kør:**

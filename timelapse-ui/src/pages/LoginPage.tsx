@@ -10,6 +10,12 @@ import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/brow
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 
+// The usual cause when Touch ID never answers in Safari (2026-10-13: the
+// LastPass extension swallowed the request; turning it off fixed it).
+const PASSKEY_EXTENSION_HINT =
+  'Touch ID / Windows Hello svarede ikke. Bruger du en adgangskode-manager i Safari (fx LastPass), ' +
+  'så slå udvidelsen fra under Safari → Indstillinger → Udvidelser, genindlæs siden og prøv igen.'
+
 export default function LoginPage() {
   const { login, verifyMfa, confirmMfaSetup, acceptSessionUser } = useAuth()
   const navigate  = useNavigate()
@@ -177,7 +183,7 @@ export default function LoginPage() {
       timer = setTimeout(() => {
         controller.abort()
         WebAuthnAbortService.cancelCeremony()
-        reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen.'))
+        reject(new Error(PASSKEY_EXTENSION_HINT))
       }, 75_000)
     })
     deadline.catch(() => {})  // only surfaced through withDeadline()
@@ -213,7 +219,8 @@ export default function LoginPage() {
       reportPasskeyError('touch-id', e)
       if (e?.name !== 'AbortError') {
         setError(e?.name === 'NotAllowedError'
-          ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne.'
+          ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne. ' +
+            'Bruger du en adgangskode-manager i Safari (fx LastPass), så slå udvidelsen fra og prøv igen.'
           : (e?.message ?? 'Touch ID-login fejlede'))
       }
       prefetchPasskeyOptions()   // ready for the next click
