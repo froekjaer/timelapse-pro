@@ -2,6 +2,11 @@
 
 Regression anchor: a persisted status="online" whose last observation is hours
 old MUST compute as offline (the Edge2 defect). Pure functions; no DB/HTTP.
+
+The CMDB/ITIM "consistency" tests below exercise the shared connectivity
+functions and CMDB's delegation to them. They are NOT HTTP integration tests
+(no server, no requests); end-to-end HTTP consistency is a separate,
+integration-marked concern.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -49,9 +54,21 @@ class _Dev:
 
 
 def test_display_status_passthrough_lifecycle_states():
-    for st in ("provisioning", "import", "unknown"):
-        # even with an ancient last_seen, lifecycle/semantic states pass through
+    # Only genuine administrative/lifecycle states pass through regardless of age.
+    for st in ("provisioning", "import"):
         assert C.display_status(_Dev(status=st, last_seen=ago(10_000_000)), NOW) == st
+
+
+def test_unknown_or_missing_status_does_not_mask_fresh_connectivity():
+    # "unknown"/None/"" is the ABSENCE of a lifecycle state, not a state: a fresh
+    # authenticated last_seen must compute connectivity, not be masked as unknown.
+    for st in ("unknown", None, "", "online", "offline"):
+        assert C.display_status(_Dev(status=st, last_seen=ago(60)), NOW) == "online"
+    # ...with no observation at all it is still unknown (no evidence):
+    assert C.display_status(_Dev(status="unknown", last_seen=None), NOW) == "unknown"
+    # a persisted "online" that is stale must read stale/offline, never online:
+    assert C.display_status(_Dev(status="online", last_seen=ago(700)), NOW) == "stale"
+    assert C.display_status(_Dev(status="online", last_seen=ago(100000)), NOW) == "offline"
 
 
 def test_display_status_none_device():
@@ -135,7 +152,8 @@ _EXPECT = {"fresh": "online", "stale": "stale", "offline": "offline",
            "future": "unknown", "never": "unknown"}
 
 
-def test_api_display_status_matches_expected_for_all_scenarios():
+def test_shared_display_status_matches_expected_for_all_scenarios():
+    # Function-level (the value the API layer returns), not an HTTP call.
     for k, dev in _SCEN.items():
         assert C.display_status(dev, NOW) == _EXPECT[k], k
 
@@ -158,6 +176,7 @@ def test_cmdb_delegates_to_the_same_calculation():
         "never":   _Dev("online", None),
         "import":  _Dev("import", None),
         "provisioning": _Dev("provisioning", None),
+        "unknown_fresh": _Dev("unknown", now - timedelta(seconds=60)),
     }
     for k, dev in cases.items():
         assert cmdb._display_device_status(dev) == C.display_status(dev), k

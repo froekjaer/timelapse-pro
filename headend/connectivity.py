@@ -10,10 +10,11 @@ using ONE definition shared by dashboard, CMDB, APIs and ITIM. Status must
 change as time passes even when no new message arrives.
 
 Connectivity is distinct from lifecycle. The persisted ``device.status``
-column carries lifecycle/semantic states (provisioning, import, unknown, and
+column carries administrative/lifecycle states (provisioning, import, and
 states written by the reboot lifecycle); those are passed through unchanged.
-Any other value is overridden by the freshness-derived connectivity state, so
-a stale "online" can never be presented as current.
+Any other value -- including a stale "online", or a missing/"unknown" status --
+is derived from freshness, so a stale "online" can never be presented as
+current, and a fresh authenticated last_seen is never masked as "unknown".
 
 Three distinct concepts (keep them separate — do not conflate):
   * connectivity_state(): categorical online|stale|offline|unknown (for display)
@@ -74,9 +75,19 @@ def _resolve_thresholds(online_raw, offline_raw,
 ONLINE_MAX_AGE_S, OFFLINE_MIN_AGE_S = _resolve_thresholds(
     os.getenv("TIMELAPSE_CONN_ONLINE_S"), os.getenv("TIMELAPSE_CONN_OFFLINE_S"))
 
-# Raw ``device.status`` values that are lifecycle/semantic (not connectivity)
-# and must be shown as-is rather than overridden by freshness.
-NON_CONNECTIVITY_STATUS = {"provisioning", "import", "unknown"}
+# Administrative/lifecycle states that legitimately override connectivity: a
+# device being provisioned, or an imported record, is not "online" merely
+# because a row is fresh. "unknown" is deliberately NOT here -- it is the
+# ABSENCE of a lifecycle value (the historical ``status or "unknown"`` default),
+# so a fresh authenticated last_seen must still compute connectivity rather than
+# be masked as "unknown".
+#
+# PHASE 2 (data-model, NOT Phase 3): move lifecycle/administrative state onto its
+# own column/axis, separate from the connectivity-derived status, so connectivity
+# is ALWAYS computed purely from freshness and administrative restrictions are
+# represented independently. Needs a schema change; out of Phase 3 scope
+# (see FF-TLP-0002 / reliability assessment).
+LIFECYCLE_STATES = {"provisioning", "import"}
 
 
 def _now(now: datetime | None = None) -> datetime:
@@ -131,7 +142,9 @@ def display_status(device, now: datetime | None = None) -> str:
     heard from has no evidence of state, and "unknown" says so honestly."""
     if device is None:
         return "unknown"
-    raw = getattr(device, "status", None) or "unknown"
-    if raw in NON_CONNECTIVITY_STATUS:
+    raw = getattr(device, "status", None)
+    if raw in LIFECYCLE_STATES:
         return raw
+    # Any other value -- None/""/"unknown"/"online"/"offline" -- is derived from
+    # observation freshness, independently of the persisted status column.
     return connectivity_state(getattr(device, "last_seen", None), now)
