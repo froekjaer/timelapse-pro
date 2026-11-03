@@ -738,7 +738,8 @@ export default function LabPage() {
     setStatusMsg('Anmoder om fuld capture (tæller lukker)…')
     try {
       const queued = await requestCapture(deviceId)
-      const result = await waitForLabResult(['capture'], queued?.command?.command_id)
+      // Fuld capture tager ~40s (fuldopl. download + aflaesning af lukker/blaende/ISO/fokus + upload); giv op til ~120s
+      const result = await waitForLabResult(['capture'], queued?.command?.command_id, 80)
       setStatusMsg(result?.ok ? 'Fuld capture modtaget' : 'Fuld capture fejlede')
       setTimeout(() => setStatusMsg(''), 3000)
     } catch {
@@ -785,8 +786,8 @@ export default function LabPage() {
     }
   }
 
-  async function waitForLabResult(expected: string[], commandId?: string) {
-    for (let attempt = 0; attempt < 30; attempt++) {
+  async function waitForLabResult(expected: string[], commandId?: string, maxAttempts = 30) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise(resolve => window.setTimeout(resolve, 1500))
       const cfg = await loadAdminDeviceConfig(deviceId)
       if (cfg?.lab_result && expected.includes(cfg.lab_result.type) &&
