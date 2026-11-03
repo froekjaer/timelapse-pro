@@ -5659,9 +5659,9 @@ def _business_impact(inv: DeviceInventory | None, device: Device | None, update_
     if device and (device.customer_id or device.site_id):
         score += 8
         factors.append("kunde/site-tilknytning")
-    if device and device.status and device.status != "online":
+    if device and display_status(device) != "online":
         score += 6
-        factors.append(f"enhedsstatus: {device.status}")
+        factors.append(f"enhedsstatus: {display_status(device)}")
     if inv and inv.data_partition_used_pct and inv.data_partition_used_pct >= 85:
         score += 8
         factors.append("høj data-partition udnyttelse")

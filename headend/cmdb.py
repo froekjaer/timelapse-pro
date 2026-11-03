@@ -35,6 +35,7 @@ import os
 import secrets
 import string
 from datetime import datetime, timezone, timedelta
+from connectivity import display_status
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -439,7 +440,6 @@ def _pending_environment(inv: DeviceInventory) -> str:
 def _display_device_status(device: Device | None) -> str:
     # Phase 3: single authoritative connectivity calculation (freshness-based),
     # shared with main.py/ITIM. Lifecycle/semantic states pass through there.
-    from connectivity import display_status
     return display_status(device)
 
 
@@ -894,7 +894,7 @@ def get_operational_context(
                "Afventende sikkerhedsopdateringer")
     add_factor("blocked_updates", 10 if updates.get("blocked_count", 0) else 0,
                "Blokerede opdateringer")
-    add_factor("offline", 20 if not device or str(device.status).lower() != "online" else 0,
+    add_factor("offline", 20 if display_status(device) != "online" else 0,
                "Enheden er ikke online")
     score = min(100, score)
     risk_level = "critical" if score >= 70 else "high" if score >= 45 else "medium" if score >= 20 else "low"
