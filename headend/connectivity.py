@@ -10,7 +10,8 @@ using ONE definition shared by dashboard, CMDB, APIs and ITIM. Status must
 change as time passes even when no new message arrives.
 
 Connectivity is distinct from lifecycle. The persisted ``device.status``
-column carries administrative/lifecycle states (provisioning, import, and
+column carries administrative/lifecycle states (provisioning, import, the terminal
+``revoked``/``retired`` states, and
 states written by the reboot lifecycle); those are passed through unchanged.
 Any other value -- including a stale "online", or a missing/"unknown" status --
 is derived from freshness, so a stale "online" can never be presented as
@@ -77,17 +78,21 @@ ONLINE_MAX_AGE_S, OFFLINE_MIN_AGE_S = _resolve_thresholds(
 
 # Administrative/lifecycle states that legitimately override connectivity: a
 # device being provisioned, or an imported record, is not "online" merely
-# because a row is fresh. "unknown" is deliberately NOT here -- it is the
-# ABSENCE of a lifecycle value (the historical ``status or "unknown"`` default),
-# so a fresh authenticated last_seen must still compute connectivity rather than
-# be masked as "unknown".
+# because a row is fresh. ``revoked`` and ``retired`` are TERMINAL administrative
+# states (set on ``device.status`` by the edge lifecycle, api/edge_lifecycle_api);
+# a revoked or retired device must keep its administrative meaning and must NEVER
+# be presented as "online" just because its last_seen is still fresh -- the
+# connectivity axis must not mask a decommissioning decision. "unknown" is
+# deliberately NOT here -- it is the ABSENCE of a lifecycle value (the historical
+# ``status or "unknown"`` default), so a fresh authenticated last_seen must still
+# compute connectivity rather than be masked as "unknown".
 #
 # PHASE 2 (data-model, NOT Phase 3): move lifecycle/administrative state onto its
 # own column/axis, separate from the connectivity-derived status, so connectivity
 # is ALWAYS computed purely from freshness and administrative restrictions are
 # represented independently. Needs a schema change; out of Phase 3 scope
 # (see FF-TLP-0002 / reliability assessment).
-LIFECYCLE_STATES = {"provisioning", "import"}
+LIFECYCLE_STATES = {"provisioning", "import", "revoked", "retired"}
 
 
 def _now(now: datetime | None = None) -> datetime:

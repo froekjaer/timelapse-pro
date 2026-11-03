@@ -431,13 +431,16 @@ def _probe_edge_from_diagnostics(db: Session) -> None:
     import json
     # Seneste diagnostik pr. enhed (sidste 24t)
     rows = db.execute(text("""
-        SELECT DISTINCT ON (device_id)
-            device_id, recorded_at, cpu_temp_c, cpu_load_pct, ram_used_mb, disk_used_gb,
-            battery_v, solar_v, connectivity, uptime_s, ssd_used_pct, upload_queue,
-            cam_battery_pct, cam_shutter_pct, cam_shutter_alarm, cam_available_shots
-        FROM diagnostics
-        WHERE recorded_at >= :since
-        ORDER BY device_id, recorded_at DESC
+        SELECT DISTINCT ON (dg.device_id)
+            dg.device_id, dg.recorded_at, dg.cpu_temp_c, dg.cpu_load_pct, dg.ram_used_mb,
+            dg.disk_used_gb, dg.battery_v, dg.solar_v, dg.connectivity, dg.uptime_s,
+            dg.ssd_used_pct, dg.upload_queue, dg.cam_battery_pct, dg.cam_shutter_pct,
+            dg.cam_shutter_alarm, dg.cam_available_shots,
+            dv.last_seen AS dev_last_seen
+        FROM diagnostics dg
+        LEFT JOIN devices dv ON dv.device_id = dg.device_id
+        WHERE dg.recorded_at >= :since
+        ORDER BY dg.device_id, dg.recorded_at DESC
     """), {"since": _now() - timedelta(hours=24)}).mappings().all()
 
     low_batt = float(_setting(db, "itim_edge_battery_low_v", "11.8") or 11.8)
@@ -449,14 +452,28 @@ def _probe_edge_from_diagnostics(db: Session) -> None:
                     "cam_battery_pct", "cam_shutter_pct", "cam_available_shots"):
             if r[col] is not None:
                 m[col] = float(r[col])
+        # Diagnostics freshness (age of the latest telemetry ROW) is a metric in
+        # its own right and is kept available -- but it is NOT last_seen and must
+        # not drive connectivity. Exposed separately as ``diag_age_s``.
         rec = r["recorded_at"]
         if rec is not None:
             if rec.tzinfo is None:
                 rec = rec.replace(tzinfo=timezone.utc)
-            age = (_now() - rec).total_seconds()
-            m["last_seen_age_s"] = age
-            from connectivity import is_up as _conn_is_up
-            m["up"] = 1.0 if _conn_is_up(rec) else 0.0
+            m["diag_age_s"] = (_now() - rec).total_seconds()
+        # Connectivity ("up" / "last_seen_age_s") derives from the device's
+        # AUTHORITATIVE last_seen (headend receipt time of the most recent
+        # authenticated sync), never from the diagnostics recorded_at: a device
+        # can authenticate without writing a diagnostics row (and a stale row can
+        # linger after the device goes quiet), so recorded_at is the wrong
+        # freshness signal for liveness. One shared definition via
+        # connectivity.is_up (see connectivity.py).
+        dev_last_seen = r["dev_last_seen"]
+        if dev_last_seen is not None and dev_last_seen.tzinfo is None:
+            dev_last_seen = dev_last_seen.replace(tzinfo=timezone.utc)
+        from connectivity import is_up as _conn_is_up
+        m["up"] = 1.0 if _conn_is_up(dev_last_seen) else 0.0
+        if dev_last_seen is not None:
+            m["last_seen_age_s"] = (_now() - dev_last_seen).total_seconds()
         record_metrics(db, f"edge:{did}", "edge", m, device_id=did, scope="edge",
                        display_name=did)
 

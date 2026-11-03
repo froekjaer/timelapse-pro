@@ -180,3 +180,94 @@ def test_cmdb_delegates_to_the_same_calculation():
     }
     for k, dev in cases.items():
         assert cmdb._display_device_status(dev) == C.display_status(dev), k
+
+
+# --- P6: Codex review follow-ups (two regressions) ---------------------------
+
+# Finding 2 (lifecycle): the terminal administrative states ``revoked`` and
+# ``retired`` (written to device.status by the edge lifecycle) must keep their
+# meaning and must NEVER be masked by a freshly computed connectivity status.
+
+def test_revoked_and_retired_are_not_masked_by_fresh_connectivity():
+    for st in ("revoked", "retired"):
+        # A fresh last_seen would otherwise compute "online" -> must stay the admin state.
+        assert C.display_status(_Dev(status=st, last_seen=ago(60)), NOW) == st
+        # ...and at any age, including never-seen.
+        assert C.display_status(_Dev(status=st, last_seen=ago(10_000_000)), NOW) == st
+        assert C.display_status(_Dev(status=st, last_seen=None), NOW) == st
+        assert st in C.LIFECYCLE_STATES
+
+
+def test_revoked_retired_consistent_via_cmdb():
+    cmdb = pytest.importorskip("cmdb")
+    now = datetime.now(timezone.utc)
+    for st in ("revoked", "retired"):
+        dev = _Dev(st, now - timedelta(seconds=60))
+        assert cmdb._display_device_status(dev) == st == C.display_status(dev)
+
+
+# Finding 1 (ITIM): the edge "up" / "last_seen_age_s" metrics must derive from
+# the device's AUTHORITATIVE last_seen, not the diagnostics recorded_at. The
+# diagnostics-row age must remain available on its own, as ``diag_age_s``.
+# Driven with a single stubbed diagnostics row -- no DB / Postgres. Uses the
+# real wall clock (not NOW) so it stays consistent with connectivity.is_up,
+# which reads the clock itself.
+
+def _run_itim_edge_probe(last_seen_age_s, recorded_age_s, monkeypatch):
+    itim = pytest.importorskip("itim")
+    ref = datetime.now(timezone.utc)
+    dev_last_seen = None if last_seen_age_s is None else ref - timedelta(seconds=last_seen_age_s)
+    recorded_at = ref - timedelta(seconds=recorded_age_s)
+    captured = {}
+
+    class _Res:
+        def __init__(self, rows):
+            self._rows = rows
+        def mappings(self):
+            return self
+        def all(self):
+            return self._rows
+
+    row = {
+        "device_id": "TL-TEST", "recorded_at": recorded_at, "dev_last_seen": dev_last_seen,
+        "cpu_temp_c": 40.0, "cpu_load_pct": 10.0, "ram_used_mb": 100.0, "disk_used_gb": 1.0,
+        "battery_v": 12.5, "solar_v": 18.0, "connectivity": None, "uptime_s": 1000.0,
+        "ssd_used_pct": 10.0, "upload_queue": 0.0, "cam_battery_pct": 90.0,
+        "cam_shutter_pct": 1.0, "cam_shutter_alarm": False, "cam_available_shots": 1000.0,
+    }
+
+    class _DB:
+        def execute(self, *a, **k):
+            return _Res([row])
+
+    monkeypatch.setattr(itim, "record_metrics", lambda db, key, kind, m, **kw: captured.update(m))
+    monkeypatch.setattr(itim, "set_health", lambda *a, **k: None)
+    monkeypatch.setattr(itim, "_setting", lambda *a, **k: "11.8")
+    itim._probe_edge_from_diagnostics(_DB())
+    return captured
+
+
+def test_itim_up_follows_last_seen_not_recorded_at(monkeypatch):
+    # Fresh diagnostics ROW but device last_seen is 87h stale -> NOT up (offline).
+    # last_seen_age_s reflects last_seen; diagnostics age kept separately.
+    m = _run_itim_edge_probe(last_seen_age_s=87 * 3600, recorded_age_s=0, monkeypatch=monkeypatch)
+    assert m["up"] == 0.0
+    assert m["last_seen_age_s"] == pytest.approx(87 * 3600, abs=30)
+    assert m["diag_age_s"] == pytest.approx(0, abs=30)
+
+
+def test_itim_up_online_when_last_seen_fresh_despite_old_diagnostics(monkeypatch):
+    # Inverse: stale diagnostics ROW but a fresh authenticated last_seen -> up.
+    m = _run_itim_edge_probe(last_seen_age_s=60, recorded_age_s=87 * 3600, monkeypatch=monkeypatch)
+    assert m["up"] == 1.0
+    assert m["last_seen_age_s"] == pytest.approx(60, abs=30)
+    assert m["diag_age_s"] == pytest.approx(87 * 3600, abs=30)
+
+
+def test_itim_up_unknown_when_last_seen_missing(monkeypatch):
+    # No authoritative last_seen -> no verified liveness -> not up; no last_seen_age_s,
+    # but diagnostics age is still exposed.
+    m = _run_itim_edge_probe(last_seen_age_s=None, recorded_age_s=0, monkeypatch=monkeypatch)
+    assert m["up"] == 0.0
+    assert "last_seen_age_s" not in m
+    assert m["diag_age_s"] == pytest.approx(0, abs=30)
