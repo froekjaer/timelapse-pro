@@ -947,7 +947,7 @@ def webauthn_login_begin(payload: dict, request: Request, db: Session = Depends(
     from database import WebAuthnCredential
     username = payload.get("username", "")
     if not username:  # passkey AutoFill / usernameless (services/webauthn_autofill.py)
-        return _webauthn_autofill.begin(db, Settings, _webauthn_settings(db, request)[0])
+        return _webauthn_autofill.begin(db, Settings, _webauthn_settings(db, request)[0], autofill_setting=_get_setting(db, "webauthn_login_autofill", "off"))
     user = db.query(User).filter_by(username=username, is_active=True).first()
     if not user:
         raise HTTPException(status_code=404, detail="Bruger ikke fundet")

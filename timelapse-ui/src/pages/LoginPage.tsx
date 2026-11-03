@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
-import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
+import { browserSupportsWebAuthnAutofill, startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
 import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/browser'
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -147,11 +147,50 @@ export default function LoginPage() {
     })
       .then(async r => {
         if (!r.ok) throw new Error(`login-begin ${r.status}`)
-        prefetched.current = { options: await r.json(), at: Date.now() }
+        const options = await r.json()
+        prefetched.current = { options, at: Date.now() }
+        if (options.timelapseAutofill) startAutofill()
       })
       .catch(e => { prefetched.current = null; reportPasskeyError('prefetch', e) })
       .finally(() => { prefetching.current = null })
     return prefetching.current
+  }
+
+  // Passkey AutoFill — opt-in via the server setting webauthn_login_autofill
+  // (default off, 2026-10-14). #302 switched it off believing a pending
+  // AutoFill request blocked the Touch ID button in Safari; the real cause
+  // was the LastPass extension. It runs on its own challenge; the button's
+  // startAuthentication() cancels it when clicked.
+  const autofillStarted = useRef(false)
+  const [autofillOn, setAutofillOn] = useState(false)
+
+  async function startAutofill() {
+    if (autofillStarted.current) return
+    autofillStarted.current = true
+    try {
+      if (!(await browserSupportsWebAuthnAutofill())) return
+      setAutofillOn(true)
+      const begin = await fetch(`${getApiUrl()}/api/auth/webauthn/login-begin`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      })
+      if (!begin.ok) throw new Error(`login-begin ${begin.status}`)
+      const result = await startAuthentication({ optionsJSON: await begin.json(), useBrowserAutofill: true })
+      setLoading(true)
+      const res = await fetch(`${getApiUrl()}/api/auth/webauthn/login-complete`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
+      })
+      if (!res.ok) throw new Error('Passkey-login blev ikke godkendt af serveren. Prøv igen.')
+      const data = await res.json()
+      const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
+      acceptSessionUser(u)
+      navigate(from, { replace: true })
+    } catch (e: any) {
+      setLoading(false)
+      // AbortError: the Touch ID button (or leaving the page) took over.
+      if (e?.name !== 'AbortError') reportPasskeyError('autofill', e)
+    }
   }
 
   useEffect(() => {
@@ -254,7 +293,7 @@ export default function LoginPage() {
               <input
                 ref={usernameRef}
                 type="text"
-                autoComplete="username"
+                autoComplete={autofillOn ? "username webauthn" : "username"}
                 value={username}
                 onChange={e => { if (mfaRequired || mfaSetupRequired) resetMfaStep(); setUsername(e.target.value) }}
                 onInput={e => setUsername(e.currentTarget.value)}
