@@ -127,6 +127,7 @@ from services.update_supersession import device_already_at_update_version, super
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services.config_merge import merge_missing_defaults as _merge_missing_defaults
+from services.power_monitor_telemetry import default_diagnostics_config, power_monitor_diagnostic_fields as _power_monitor_diagnostic_fields, run_power_monitor_migration, serialize_power_monitor_reading
 from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
 from services.release_candidates import is_newer_release as _is_newer_release, latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
 from services import webauthn_autofill as _webauthn_autofill
@@ -593,6 +594,7 @@ def startup():
     except Exception as _exc_v14:
         log.warning("DB migration v14 fejl (ikke kritisk): %s", _exc_v14)
 
+    run_power_monitor_migration(engine, log)
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -3734,15 +3736,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                 "role": "backup_sftp",
             },
         },
-        "diagnostics": {
-            "sync_poll_interval_minutes":          5,
-            "update_poll_interval_minutes":        5,
-            "inventory_report_interval_hours":    24,
-            "collect": [
-                "cpu_temperature", "cpu_load",
-                "memory_usage", "disk_usage", "connectivity_type"
-            ],
-        },
+        "diagnostics": default_diagnostics_config(),
         "siem": {
             "enabled": True,
             "mode": "lab",
@@ -4130,6 +4124,7 @@ def heartbeat(
     # Store diagnostics
     diag = req.diagnostics
     stats = req.capture_stats
+    power_fields = _power_monitor_diagnostic_fields(diag)
     # Extract camera diagnostics sub-dict
     cam = diag.get("camera", {})
     cam_status = cam.get("camera_status", {})
@@ -4142,6 +4137,7 @@ def heartbeat(
         ram_used_mb  = diag.get("memory_used_mb"),
         disk_used_gb = diag.get("disk_used_gb"),
         battery_v    = diag.get("battery_voltage"),
+        **power_fields,
         solar_v      = diag.get("solar_voltage"),
         connectivity = diag.get("connectivity_type"),
         uptime_s     = diag.get("uptime_s"),
@@ -13558,6 +13554,7 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
             "ssd_free_gb":         diag.ssd_free_gb,
             "service_restarts":    diag.service_restarts,
             "upload_queue":        diag.upload_queue,
+            **serialize_power_monitor_reading(diag),
             "recorded_at":         diag.recorded_at.isoformat() if diag.recorded_at else None,
             "cam_battery_pct":     diag.cam_battery_pct,
             "cam_shutter_cnt":     diag.cam_shutter_cnt,
@@ -13667,7 +13664,7 @@ _FACTORY_CONFIG_DEFAULTS = {
         },
     },
     "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"},
-    "diagnostics": {"sync_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
+    "diagnostics": default_diagnostics_config(),
     "system": {
         "error_recovery_sleep_s": 30,
         "min_sleep_s": 60,
@@ -15891,10 +15888,13 @@ def get_diagnostics_history(
     rows = (
         db.query(Diagnostic)
         .filter(Diagnostic.device_id == device_id, Diagnostic.recorded_at >= since)
-        .order_by(Diagnostic.recorded_at.asc())
+        .order_by(Diagnostic.recorded_at.desc())
         .limit(limit)
         .all()
     )
+    # Limit must select the newest samples. Reverse afterwards so chart data
+    # remains chronological from left to right.
+    rows.reverse()
     return [
         {
             "ts":                  r.recorded_at.isoformat() if r.recorded_at else None,
@@ -15909,6 +15909,7 @@ def get_diagnostics_history(
             "uptime_s":            r.uptime_s,
             "upload_queue":        r.upload_queue,
             "service_restarts":    r.service_restarts,
+            **serialize_power_monitor_reading(r),
             "cam_battery_pct":     r.cam_battery_pct,
             "cam_shutter_cnt":     r.cam_shutter_cnt,
             "cam_shutter_pct":     r.cam_shutter_pct,

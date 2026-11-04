@@ -1,5 +1,7 @@
 from pathlib import Path
 import importlib.util
+import os
+import subprocess
 
 import pytest
 
@@ -35,6 +37,49 @@ def test_base_image_requires_pinned_checksum() -> None:
         injector._require_pinned_base_image(
             {"id": "unsafe", "base_image": {"url": "https://vendor.invalid/latest.img.xz"}}
         )
+
+
+def test_orangepi4pro_image_enables_i2c0_without_dropping_other_overlays() -> None:
+    import yaml
+
+    target = yaml.safe_load(
+        (ROOT / "headend" / "tools" / "hardware" / "orangepi4pro" / "target.yaml").read_text()
+    )
+    assert injector._validated_boot_overlays(target) == ["i2c0"]
+
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert "EXISTING_OVERLAYS" in source
+    assert "awk '$0 !~ /^overlays=/'" in source
+    assert 'printf \'overlays=%s\\n\'' in source
+    assert '"boot_overlays": boot_overlays' in source
+
+
+def test_image_rejects_unsafe_boot_overlay_names() -> None:
+    with pytest.raises(ValueError, match="Ugyldigt boot overlay"):
+        injector._validated_boot_overlays({"boot_overlays": ["i2c0; touch /tmp/pwned"]})
+
+
+def test_orangepi_overlay_injection_is_idempotent(tmp_path: Path) -> None:
+    boot_dir = tmp_path / "boot"
+    boot_dir.mkdir()
+    env_file = boot_dir / "orangepiEnv.txt"
+    env_file.write_text("verbosity=1\noverlays=uart3 i2c0\nrootfstype=ext4\n")
+
+    block = injector._INJECT_SCRIPT.split(
+        "# ── Board overlays", 1
+    )[1].split("# ── Udpak VORES rootfs", 1)[0]
+    block = block.replace("/mnt/root", str(tmp_path))
+    command = "set -euo pipefail\n# ── Board overlays" + block
+    environment = {**os.environ, "BOOT_OVERLAYS": "i2c0"}
+
+    subprocess.run(["bash", "-c", command], env=environment, check=True)
+    first = env_file.read_text()
+    subprocess.run(["bash", "-c", command], env=environment, check=True)
+    second = env_file.read_text()
+
+    assert first == second
+    assert first.count("overlays=") == 1
+    assert "overlays=uart3 i2c0" in first
 
 
 def test_reverse_tunnel_rejects_reserved_headend_port() -> None:

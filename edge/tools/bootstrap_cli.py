@@ -890,12 +890,15 @@ def run_camera_operation(operation_name: str, operation=None, base_dir: Path | N
     with CameraMaintenanceLease(timeout_s=45):
         state_dir = os.getenv("TIMELAPSE_SERVICE_STATE_DIR")
         platform = create_service_platform(base_dir=base_dir, state_dir=Path(state_dir) if state_dir else None)
-        session = platform.current_session()
+        session, started_here = _cli_service_session(platform)
         if not session:
             print("Service Session kræver en aktiv EdgeServiceGrant eller eksplicit offline-recovery session.")
             return False
-        result = platform.call(operation_name, session=session, release_after=True, **(operation_kwargs or {}))
-        return bool(result.get("ok", True))
+        try:
+            result = platform.call(operation_name, session=session, release_after=True, **(operation_kwargs or {}))
+            return bool(result.get("ok", True))
+        finally:
+            _end_cli_session(platform, session, started_here, "cli operation complete")
 
 
 def _run_camera_maintenance_callback(operation, base_dir: Path, already_powered: bool) -> bool:
@@ -960,13 +963,16 @@ def print_service_operation(operation: str, base_dir: Path, params: dict[str, An
 
     state_dir = os.getenv("TIMELAPSE_SERVICE_STATE_DIR")
     platform = create_service_platform(base_dir=base_dir, state_dir=Path(state_dir) if state_dir else None)
-    session = platform.current_session()
+    session, started_here = _cli_service_session(platform)
     if not session:
         print("Service Session kræver en aktiv EdgeServiceGrant eller eksplicit offline-recovery session.")
         return False
-    result = platform.call(operation, session=session, release_after=True, **(params or {}))
-    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
-    return bool(result.get("ok", True) or result.get("result") in {"PASS", "PASS WITH DEVIATIONS"})
+    try:
+        result = platform.call(operation, session=session, release_after=True, **(params or {}))
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return bool(result.get("ok", True) or result.get("result") in {"PASS", "PASS WITH DEVIATIONS"})
+    finally:
+        _end_cli_session(platform, session, started_here, "cli operation complete")
 
 
 def parse_service_params(raw: list[str]) -> dict[str, Any]:
@@ -1096,10 +1102,10 @@ def _cli_service_session(platform):
     return session, True
 
 
-def _end_cli_session(platform, session, started_here: bool) -> None:
+def _end_cli_session(platform, session, started_here: bool, reason: str = "cli menu exit") -> None:
     if started_here and session is not None:
         try:
-            platform.invalidate(session, "cli menu exit")
+            platform.invalidate(session, reason)
         except Exception:
             pass
 
@@ -1373,7 +1379,9 @@ def choose_focus_drive() -> bool:
         if value is None:
             print("Afbrudt")
             return False
-        return camera_set_config(path, value)
+        # Delegate to the shared focus path so Nikon Z30 receives its required
+        # MF/live-view transaction instead of a raw one-setting gphoto call.
+        return camera_focus_drive(value)
     print("Manual focus drive blev ikke fundet. Kamera/objektiv understoetter muligvis ikke remote focus.")
     return False
 
@@ -1561,6 +1569,26 @@ def camera_autofocus() -> bool:
 
 
 def camera_focus_drive(value: str) -> bool:
+    # Nikon Z30 exposes manualfocusdrive but accepts it only while its
+    # Live View focus mode is MF.  Keep setup, motor movement and shutdown
+    # in one gphoto2 process; leaving viewfinder enabled can strand a PTP
+    # session after the drive.  This is deliberately the same lifecycle as
+    # LAB mode and the technician service operation.
+    z30_context = "/main/capturesettings/liveviewaffocus"
+    if gphoto_config_exists(z30_context):
+        print("Nikon Z30: saetter manuel fokus, flytter objektivet og lukker Live View...")
+        result = run([
+            "gphoto2",
+            "--set-config", f"{z30_context}=Manual Focus (selection)",
+            "--set-config", "/main/actions/viewfinder=1",
+            "--set-config", f"/main/actions/manualfocusdrive={value}",
+            "--set-config", "/main/actions/viewfinder=0",
+        ], check=False, timeout=45)
+        if result.returncode == 0:
+            print("OK")
+            return True
+        print(result.stderr or result.stdout)
+        return False
     candidates = [
         "/main/actions/manualfocusdrive",
         "/main/actions/manualfocusdrive2",

@@ -435,6 +435,12 @@ CAMERA_PROFILES = {
                 "/main/capturesettings/liveviewaffocus": "Manual Focus (selection)",
                 "/main/actions/viewfinder": "1",
             },
+            # Leaving viewfinder/live view on keeps some Z30 gphoto2 sessions
+            # open after manualfocusdrive.  Finish the same transaction by
+            # disabling it again, just as the autofocus flow does.
+            "manual_focus_cleanup": {
+                "/main/actions/viewfinder": "0",
+            },
         },
     },
 
@@ -1249,11 +1255,12 @@ class GPhoto2Driver(CameraBase):
         action = self._profile.get("actions", {}).get("manual_focus")
         if not action or not value:
             return False
-        # Context (live view + MF) and the drive in ONE gphoto2 session, like
-        # the autofocus sequence verified on Edge2 2026-10-02: live view set by
-        # a separate gphoto2 process is not guaranteed to survive its exit.
+        # Context (live view + MF), the drive, and the live-view shutdown are
+        # one gphoto2 session.  A separate process cannot reliably retain the
+        # context, while leaving viewfinder on can keep the Z30 process open.
         context = self._profile.get("focus_controls", {}).get("manual_focus_context", {})
-        return self._set_configs([*context.items(), (action, value)], "Manuel fokus")
+        cleanup = self._profile.get("focus_controls", {}).get("manual_focus_cleanup", {})
+        return self._set_configs([*context.items(), (action, value), *cleanup.items()], "Manuel fokus")
 
     def get_config_param(self, path: str) -> Optional[dict]:
         """Read and parse one gphoto2 config parameter."""
