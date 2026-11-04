@@ -3877,3 +3877,12 @@ person vide".
 - **Rotate-out:** Existing image-injected TLS og Headend-held SSH credentials kan markeres rotated, så de ikke længere står som parallel authority efter successor credentials er aktive.
 - **Dokumentation:** `Dokumentation/WP4_EDGE_IMAGE_PROVISIONING_PKI_CONVERGENCE_2026-08.md` opdateret med exit-gate, remaining legacy writer paths og rollback.
 - **Tests:** Syntax check OK. Fokuseret WP-4/Edge lifecycle/image/mTLS suite: 79 passed, 12 eksisterende mTLS skips. CI-lignende suite: 795 passed, 4 eksisterende smoke skips, 544 deselected.
+
+### Handover 2026-11-04 — Codex: INA219 forsyningsmåling på aktiv Edge
+- **Aktiv hardware:** `TL-C87FF9587CA0` / Orange Pi 4 Pro har nu GY-219/INA219 på I2C0, adresse `0x40`. `/boot/orangepiEnv.txt` er sikkerhedskopieret som `/boot/orangepiEnv.txt.pre-ina219-20261104`, `overlays=i2c0` er aktiveret, Edge er genstartet, og `/dev/i2c-0` samt adressen `0x40` er verificeret live.
+- **Aktuel fysisk afgrænsning:** Sensoren måler under laboratorietesten kun Nikon Z30-forsyningen. Den skal senere flyttes foran 12 V-fordelingen og måle hele systemet. Koden har derfor et konfigurerbart `measurement_scope` (`camera`, `system`, `modem`), så UI og historik ikke fejlmærker data.
+- **Live måling med kamera tændt:** 12,008-12,160 V, 0,0494-0,2280 A og 0,600-2,576 W. Normal belastning var ca. 0,05-0,06 A; periodiske kameratoppe ca. 0,21-0,23 A. Ingen INA219 overflow.
+- **Implementering:** Ny fail-open Edge-driver til INA219 og INA226, Headend heartbeat/databaselagring af spænding, strøm, effekt, shunt, status, driver og målepunkt samt UI-kort og 7-dages graf. Sensorfejl må ikke stoppe capture eller update-poll.
+- **Headend live:** Additiv DB migration v15 er kørt på PostgreSQL, alle seks nye kolonner er verificeret, Headend er genstartet, og `/api/health` returnerer HTTP 200.
+- **Testbevis:** `tests/test_edge_ina219_power_monitor.py` 11/11, `headend/tests/test_heartbeat_power_monitor.py` 2/2, Python compile OK og `npm run build` OK. Den fælles `timelapse_test`-database har uafhængig kendt schema-drift (`devices.commissioning_key_disabled` mangler); de nye kontrakttests er derfor databaseuafhængige.
+- **Afventer ved denne entry:** Signeret LAB-artifact gennem update-flowet til `TL-C87FF9587CA0`, målrettet config (`ina219`, I2C0, `0x40`, 0,1 ohm, 0,1 mA LSB) og verificeret heartbeat/UI-data. Fremtidige Orange Pi 4 Pro-images skal aktivere I2C0 reproducerbart; den manuelle boot-overlay må ikke være eneste installationsmetode.

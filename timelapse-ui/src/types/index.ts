@@ -70,6 +70,14 @@ export interface Diagnostic {
   ssd_free_gb: number | null
   service_restarts: number | null
   upload_queue: number | null
+  battery_v: number | null
+  battery_current_a: number | null
+  battery_power_w: number | null
+  power_monitor_status: string | null
+  power_monitor_driver: string | null
+  power_monitor_scope: string | null
+  power_monitor_shunt_mv: number | null
+  solar_v: number | null
   cam_battery_pct: number | null
   cam_shutter_cnt: number | null
   cam_shutter_pct: number | null

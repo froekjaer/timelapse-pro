@@ -17,6 +17,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from diagnostics.power_monitor import (
+    PowerMonitorConfigurationError,
+    PowerMonitorError,
+    create_power_monitor,
+)
+
 log = logging.getLogger(__name__)
 
 
@@ -44,6 +50,24 @@ class DiagnosticsCollector:
         self._data_path = Path(
             config.get("storage", {}).get("local_path", "/data")
         )
+        self._power_monitor = None
+        self._power_monitor_driver = str(
+            diag_cfg.get("power_monitor", {}).get("driver", "ina219")
+        )
+        self._power_monitor_scope = str(
+            diag_cfg.get("power_monitor", {}).get("measurement_scope", "system")
+        )
+        try:
+            self._power_monitor = create_power_monitor(
+                diag_cfg.get("power_monitor", {})
+            )
+        except PowerMonitorConfigurationError as exc:
+            # A centrally supplied hardware configuration must never prevent
+            # captures or update polling. Report it as unavailable instead.
+            log.error("Power monitor configuration rejected: %s", exc)
+            self._power_monitor_config_error = True
+        else:
+            self._power_monitor_config_error = False
 
     def collect(self) -> dict:
         """Return a dict of current diagnostics."""
@@ -63,8 +87,16 @@ class DiagnosticsCollector:
             disk = self._disk_usage()
             result.update(disk)
 
-        if "battery_voltage" in self._enabled:
+        if self._power_monitor is not None:
+            result.update(self._power_monitor_diagnostics())
+        elif "battery_voltage" in self._enabled:
             result["battery_voltage"] = self._battery_voltage()
+        elif self._power_monitor_config_error:
+            result["power_monitor"] = {
+                "driver": self._power_monitor_driver,
+                "measurement_scope": self._power_monitor_scope,
+                "status": "configuration_error",
+            }
 
         if "solar_voltage" in self._enabled:
             result["solar_voltage"] = self._solar_voltage()
@@ -173,6 +205,34 @@ class DiagnosticsCollector:
         except Exception:
             pass
         return None
+
+    def _power_monitor_diagnostics(self) -> dict:
+        """Read the optional power monitor without coupling it to capture success."""
+        driver = getattr(self._power_monitor, "driver_name", "unknown")
+        try:
+            reading = self._power_monitor.read()
+        except PowerMonitorError as exc:
+            log.warning("Power monitor unavailable: %s", exc)
+            return {
+                "battery_voltage": None,
+                "power_monitor": {
+                    "driver": driver,
+                    "measurement_scope": self._power_monitor_scope,
+                    "status": "unavailable",
+                },
+            }
+
+        return {
+            "battery_voltage": reading.voltage_v,
+            "battery_current_a": reading.current_a,
+            "battery_power_w": reading.power_w,
+            "power_monitor": {
+                "driver": driver,
+                "measurement_scope": self._power_monitor_scope,
+                "status": "overflow" if reading.overflow else "ok",
+                "shunt_voltage_mv": reading.shunt_voltage_mv,
+            },
+        }
 
     def _solar_voltage(self) -> Optional[float]:
         """Read solar panel voltage — same pattern as battery_voltage."""
