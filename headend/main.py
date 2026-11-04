@@ -593,6 +593,32 @@ def startup():
     except Exception as _exc_v14:
         log.warning("DB migration v14 fejl (ikke kritisk): %s", _exc_v14)
 
+    # ── DB migration v15: Edge system-power telemetry ────────────────────
+    # Nullable and additive: Edges without a configured monitor continue to
+    # report the legacy battery_v field without changing capture behaviour.
+    try:
+        _eng_v15 = __import__('database').engine
+        _v15_cols = [
+            ("battery_current_a", "FLOAT"),
+            ("battery_power_w", "FLOAT"),
+            ("power_monitor_status", "VARCHAR(30)"),
+            ("power_monitor_driver", "VARCHAR(50)"),
+            ("power_monitor_scope", "VARCHAR(30)"),
+            ("power_monitor_shunt_mv", "FLOAT"),
+        ]
+        with _eng_v15.connect() as _conn_v15:
+            for _col, _typ in _v15_cols:
+                try:
+                    _conn_v15.execute(text(
+                        f"ALTER TABLE diagnostics ADD COLUMN {_col} {_typ}"
+                    ))
+                    _conn_v15.commit()
+                    log.info("DB migration v15: diagnostics.%s tilføjet", _col)
+                except Exception:
+                    pass  # already present
+    except Exception as _exc_v15:
+        log.warning("DB migration v15 fejl (ikke kritisk): %s", _exc_v15)
+
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -3740,8 +3766,19 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "inventory_report_interval_hours":    24,
             "collect": [
                 "cpu_temperature", "cpu_load",
-                "memory_usage", "disk_usage", "connectivity_type"
+                "memory_usage", "disk_usage", "connectivity_type",
+                "battery_voltage"
             ],
+            "power_monitor": {
+                "enabled": False,
+                "driver": "ina226_m5_10a",
+                "measurement_scope": "system",
+                "i2c_bus": 0,
+                "i2c_address": "0x41",
+                "shunt_ohms": 0.005,
+                "current_lsb_ma": 0.32,
+                "max_bus_voltage_v": 30.0,
+            },
         },
         "siem": {
             "enabled": True,
@@ -4107,6 +4144,19 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
 
 # ── Heartbeat ─────────────────────────────────────────────────────────────────
 
+def _power_monitor_diagnostic_fields(diagnostics: dict) -> dict:
+    """Map the versioned Edge telemetry contract to nullable DB fields."""
+    power_monitor = diagnostics.get("power_monitor") or {}
+    return {
+        "battery_current_a": diagnostics.get("battery_current_a"),
+        "battery_power_w": diagnostics.get("battery_power_w"),
+        "power_monitor_status": power_monitor.get("status"),
+        "power_monitor_driver": power_monitor.get("driver"),
+        "power_monitor_scope": power_monitor.get("measurement_scope"),
+        "power_monitor_shunt_mv": power_monitor.get("shunt_voltage_mv"),
+    }
+
+
 @app.post("/api/heartbeat/{device_id}")
 def heartbeat(
     device_id: str,
@@ -4130,6 +4180,7 @@ def heartbeat(
     # Store diagnostics
     diag = req.diagnostics
     stats = req.capture_stats
+    power_fields = _power_monitor_diagnostic_fields(diag)
     # Extract camera diagnostics sub-dict
     cam = diag.get("camera", {})
     cam_status = cam.get("camera_status", {})
@@ -4142,6 +4193,12 @@ def heartbeat(
         ram_used_mb  = diag.get("memory_used_mb"),
         disk_used_gb = diag.get("disk_used_gb"),
         battery_v    = diag.get("battery_voltage"),
+        battery_current_a = power_fields["battery_current_a"],
+        battery_power_w = power_fields["battery_power_w"],
+        power_monitor_status = power_fields["power_monitor_status"],
+        power_monitor_driver = power_fields["power_monitor_driver"],
+        power_monitor_scope = power_fields["power_monitor_scope"],
+        power_monitor_shunt_mv = power_fields["power_monitor_shunt_mv"],
         solar_v      = diag.get("solar_voltage"),
         connectivity = diag.get("connectivity_type"),
         uptime_s     = diag.get("uptime_s"),
@@ -13558,6 +13615,14 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
             "ssd_free_gb":         diag.ssd_free_gb,
             "service_restarts":    diag.service_restarts,
             "upload_queue":        diag.upload_queue,
+            "battery_v":           diag.battery_v,
+            "battery_current_a":   diag.battery_current_a,
+            "battery_power_w":     diag.battery_power_w,
+            "power_monitor_status": diag.power_monitor_status,
+            "power_monitor_driver": diag.power_monitor_driver,
+            "power_monitor_scope": diag.power_monitor_scope,
+            "power_monitor_shunt_mv": diag.power_monitor_shunt_mv,
+            "solar_v":             diag.solar_v,
             "recorded_at":         diag.recorded_at.isoformat() if diag.recorded_at else None,
             "cam_battery_pct":     diag.cam_battery_pct,
             "cam_shutter_cnt":     diag.cam_shutter_cnt,
@@ -13667,7 +13732,21 @@ _FACTORY_CONFIG_DEFAULTS = {
         },
     },
     "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"},
-    "diagnostics": {"sync_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
+    "diagnostics": {
+        "sync_poll_interval_minutes": 5,
+        "update_poll_interval_minutes": 5,
+        "inventory_report_interval_hours": 24,
+        "power_monitor": {
+            "enabled": False,
+            "driver": "ina226_m5_10a",
+            "measurement_scope": "system",
+            "i2c_bus": 0,
+            "i2c_address": "0x41",
+            "shunt_ohms": 0.005,
+            "current_lsb_ma": 0.32,
+            "max_bus_voltage_v": 30.0,
+        },
+    },
     "system": {
         "error_recovery_sleep_s": 30,
         "min_sleep_s": 60,
@@ -15909,6 +15988,14 @@ def get_diagnostics_history(
             "uptime_s":            r.uptime_s,
             "upload_queue":        r.upload_queue,
             "service_restarts":    r.service_restarts,
+            "battery_v":           r.battery_v,
+            "battery_current_a":   r.battery_current_a,
+            "battery_power_w":     r.battery_power_w,
+            "power_monitor_status": r.power_monitor_status,
+            "power_monitor_driver": r.power_monitor_driver,
+            "power_monitor_scope": r.power_monitor_scope,
+            "power_monitor_shunt_mv": r.power_monitor_shunt_mv,
+            "solar_v":             r.solar_v,
             "cam_battery_pct":     r.cam_battery_pct,
             "cam_shutter_cnt":     r.cam_shutter_cnt,
             "cam_shutter_pct":     r.cam_shutter_pct,

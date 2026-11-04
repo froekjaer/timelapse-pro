@@ -17,7 +17,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { InfoTooltip } from '../components/InfoTooltip'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
+import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
 import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getDisplayImageUrl, getThumbnailUrl, setParam, pathSegment, getApiUrl } from '../api/client'
 import { setPrefetchTargets, cancelPrefetch } from '../lib/prefetchQueue'
 import { TimelineNavigator } from '../components/TimelineNavigator'
@@ -1344,6 +1344,12 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
   const shutterAlarm = diagnostics?.cam_shutter_alarm
   const ssdUsedPct   = diagnostics?.ssd_used_pct
   const ntpOffset    = diagnostics?.ntp_offset_s
+  const powerStatus  = diagnostics?.power_monitor_status
+  const powerScopeLabel = diagnostics?.power_monitor_scope === 'camera'
+    ? 'Kameraforsyning'
+    : diagnostics?.power_monitor_scope === 'modem'
+      ? 'Modemforsyning'
+      : 'Systemforsyning'
 
   return (
     <div className="space-y-5">
@@ -1428,6 +1434,21 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
               {diagnostics.service_restarts != null && diagnostics.service_restarts > 0 && (
                 <p className="text-xs text-amber-500 mt-1">{diagnostics.service_restarts} genstarter</p>
               )}
+            </div>
+            {/* Konfigureret forsyningsmålepunkt */}
+            <div className={`rounded-lg p-3 ${powerStatus && powerStatus !== 'ok' ? 'bg-amber-50' : 'bg-gray-50'}`}>
+              <p className="text-xs text-gray-400">{powerScopeLabel}</p>
+              <p className={`font-semibold mt-0.5 ${powerStatus && powerStatus !== 'ok' ? 'text-amber-700' : 'text-gray-700'}`}>
+                {diagnostics.battery_v != null ? `${diagnostics.battery_v.toFixed(2)} V` : '–'}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {diagnostics.battery_current_a != null ? `${diagnostics.battery_current_a.toFixed(3)} A` : '–'}
+                {' · '}
+                {diagnostics.battery_power_w != null ? `${diagnostics.battery_power_w.toFixed(2)} W` : '–'}
+              </p>
+              <p className="text-xs text-gray-300 mt-1">
+                {diagnostics.power_monitor_driver ?? 'Ingen måler'}{powerStatus ? ` · ${powerStatus}` : ''}
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3 mt-3">
@@ -1557,90 +1578,34 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
             </ResponsiveContainer>
           </div>
 
-          {/* Kamera shutter historik */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-gray-700">Kamera shutter-tæller — seneste 7 dage</h3>
-              <span className="text-xs text-gray-400">alarm &gt;60% af levetid</span>
+          {/* Forsyningshistorik */}
+          {diagHistory.some((row: any) => row.battery_v != null) && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold text-gray-700">{powerScopeLabel} — seneste 7 dage</h3>
+                <span className="text-xs text-gray-400">spænding og strøm</span>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={diagHistory}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                    tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                    interval="preserveStartEnd" />
+                  <YAxis yAxisId="voltage" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} unit=" V" domain={['auto', 'auto']} />
+                  <YAxis yAxisId="current" orientation="right" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} unit=" A" domain={[0, 'auto']} />
+                  <Tooltip
+                    labelFormatter={v => new Date(v).toLocaleString('da-DK')}
+                    formatter={(v: any, name: any) => [
+                      name === 'Spænding' ? `${Number(v).toFixed(2)} V` : `${Number(v).toFixed(3)} A`,
+                      name,
+                    ]}
+                  />
+                  <Line yAxisId="voltage" type="monotone" dataKey="battery_v" name="Spænding" stroke="#0f766e" strokeWidth={2} dot={false} connectNulls />
+                  <Line yAxisId="current" type="monotone" dataKey="battery_current_a" name="Strøm" stroke="#d97706" strokeWidth={2} dot={false} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-            <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={diagHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
-                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
-                  interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-                <Tooltip formatter={(v: any) => [Number(v).toLocaleString('da-DK'), 'Shutter']} />
-                <Area type="monotone" dataKey="cam_shutter_cnt" name="Shutter" stroke="#8b5cf6" fill="#ede9fe" strokeWidth={2} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* NTP offset historik */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-gray-700">NTP offset — seneste 7 dage</h3>
-              <span className="text-xs text-gray-400">alarm &gt;±2s</span>
-            </div>
-            <ResponsiveContainer width="100%" height={130}>
-              <AreaChart data={diagHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
-                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
-                  interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="s" />
-                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(3)}s`, 'NTP offset']} />
-                <ReferenceLine y={2}   stroke="#ef4444" strokeDasharray="4 2" />
-                <ReferenceLine y={-2}  stroke="#ef4444" strokeDasharray="4 2" />
-                <Area type="monotone" dataKey="ntp_offset_s" name="NTP" stroke="#10b981" fill="#d1fae5" strokeWidth={2} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </>
-      )}
-
-      {/* Diagnostics historik */}
-      {diagHistory.length > 1 && (
-        <>
-          {/* CPU temp historik */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-gray-700">CPU temperatur — seneste 7 dage</h3>
-              <span className="text-xs text-gray-400">alarm &gt;75°C</span>
-            </div>
-            <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={diagHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
-                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
-                  interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="°" />
-                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}°C`, 'CPU temp']} />
-                <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="4 2" label={{ value: 'Alarm 75°', fontSize: 10, fill: '#ef4444', position: 'insideTopLeft' }} />
-                <Area type="monotone" dataKey="cpu_temp_c" name="CPU temp" stroke="#f97316" fill="#fed7aa" strokeWidth={2} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* SSD forbrug historik */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-gray-700">SSD forbrug — seneste 7 dage</h3>
-              <span className="text-xs text-gray-400">alarm &gt;85%</span>
-            </div>
-            <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={diagHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
-                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
-                  interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="%" domain={[0, 100]} />
-                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}%`, 'SSD brugt']} />
-                <ReferenceLine y={85} stroke="#ef4444" strokeDasharray="4 2" label={{ value: 'Alarm 85%', fontSize: 10, fill: '#ef4444', position: 'insideTopLeft' }} />
-                <Area type="monotone" dataKey="ssd_used_pct" name="SSD %" stroke="#3b82f6" fill="#dbeafe" strokeWidth={2} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          )}
 
           {/* Kamera shutter historik */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
