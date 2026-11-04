@@ -15970,10 +15970,13 @@ def get_diagnostics_history(
     rows = (
         db.query(Diagnostic)
         .filter(Diagnostic.device_id == device_id, Diagnostic.recorded_at >= since)
-        .order_by(Diagnostic.recorded_at.asc())
+        .order_by(Diagnostic.recorded_at.desc())
         .limit(limit)
         .all()
     )
+    # Limit must select the newest samples. Reverse afterwards so chart data
+    # remains chronological from left to right.
+    rows.reverse()
     return [
         {
             "ts":                  r.recorded_at.isoformat() if r.recorded_at else None,
