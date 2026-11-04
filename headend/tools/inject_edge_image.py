@@ -181,6 +181,21 @@ def _validate_tunnel_settings(
         raise ValueError("Headend SSH-port skal være mellem 1024 og 65535")
 
 
+def _validated_boot_overlays(target: dict) -> list[str]:
+    """Return safe, de-duplicated board overlays from the signed target file."""
+    raw = target.get("boot_overlays") or []
+    if not isinstance(raw, list):
+        raise ValueError("boot_overlays skal være en liste")
+    overlays: list[str] = []
+    for value in raw:
+        overlay = str(value).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", overlay):
+            raise ValueError(f"Ugyldigt boot overlay: {overlay!r}")
+        if overlay not in overlays:
+            overlays.append(overlay)
+    return overlays
+
+
 def _load_target(target_id: str, repo_root: Path) -> dict:
     path = repo_root / "headend" / "tools" / "hardware" / target_id / "target.yaml"
     if not path.exists():
@@ -475,6 +490,32 @@ mkdir -p /mnt/root/etc/timelapse/device_keys
 mkdir -p /mnt/root/etc/timelapse/certs
 mkdir -p /mnt/root/data
 mkdir -p /mnt/root/run/timelapse
+
+# ── Board overlays ──────────────────────────────────────────────────────────
+# Orange Pi's vendor image keeps DT overlays in /boot/orangepiEnv.txt. Merge
+# target-required overlays idempotently so existing vendor/hardware overlays
+# are preserved. Values are validated by Python before entering this script.
+if [ -n "${BOOT_OVERLAYS:-}" ]; then
+    BOOT_ENV=/mnt/root/boot/orangepiEnv.txt
+    if [ ! -f "$BOOT_ENV" ]; then
+        echo "[inject] FEJL: boot overlays krævet, men $BOOT_ENV mangler" >&2
+        exit 1
+    fi
+    EXISTING_OVERLAYS=$(awk -F= '$1 == "overlays" {print $2}' "$BOOT_ENV" | tail -1 | tr ',' ' ')
+    MERGED_OVERLAYS=""
+    for OVERLAY in $EXISTING_OVERLAYS $BOOT_OVERLAYS; do
+        case " $MERGED_OVERLAYS " in
+            *" $OVERLAY "*) ;;
+            *) MERGED_OVERLAYS="${MERGED_OVERLAYS:+$MERGED_OVERLAYS }$OVERLAY" ;;
+        esac
+    done
+    BOOT_ENV_TMP="${BOOT_ENV}.timelapse.tmp"
+    awk '$0 !~ /^overlays=/' "$BOOT_ENV" > "$BOOT_ENV_TMP"
+    printf 'overlays=%s\n' "$MERGED_OVERLAYS" >> "$BOOT_ENV_TMP"
+    cat "$BOOT_ENV_TMP" > "$BOOT_ENV"
+    rm -f "$BOOT_ENV_TMP"
+    echo "[inject] Boot overlays: $MERGED_OVERLAYS"
+fi
 
 # ── Udpak VORES rootfs (kun timelapse-stier) ────────────────────────────────
 # Vi bevarer base-imagets kernel, bootloader og system-filer.
@@ -1062,10 +1103,12 @@ def _inject_via_docker(
     # ── 1. Start detached container ──────────────────────────────────────────
     wifi_method = target.get("wifi_method", "wpa_supplicant")
     extra_packages = " ".join(target.get("extra_packages", []))
+    boot_overlays = " ".join(_validated_boot_overlays(target))
     docker_cmd = [
         "docker", "run", "-d", "--privileged",
         "-e", f"OFFSET_BYTES={offset_bytes}",
         "-e", f"EXTRA_PACKAGES={extra_packages}",
+        "-e", f"BOOT_OVERLAYS={boot_overlays}",
         "-e", f"WIFI_METHOD={wifi_method}",
         "-e", f"WIFI_SSID={wifi_ssid}",
         "-e", f"WIFI_PASSWORD={wifi_password}",
@@ -1284,6 +1327,7 @@ def inject_edge_image(
         raise ValueError("Lokalt TLS-hostname matcher ikke den forventede Edge-ID")
 
     tgt          = _load_target(target, root)
+    boot_overlays = _validated_boot_overlays(tgt)
     display_name = tgt.get("display_name", target)
     arch         = tgt.get("arch", "arm64")
 
@@ -1417,6 +1461,9 @@ def inject_edge_image(
             "filename": tgt.get("base_image", {}).get("filename"),
             "archive_sha256": tgt.get("base_image", {}).get("sha256"),
             "checksum_verified": True,
+        },
+        "hardware_configuration": {
+            "boot_overlays": boot_overlays,
         },
         "source_rootfs": {
             "filename": rootfs_path.name,

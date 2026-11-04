@@ -44,6 +44,12 @@ boot_method: uboot_spiflash
 #   3. Bootloader til SPI Flash, rootfs til NVMe
 #   4. Fjern SD, boot fra NVMe
 
+# Board-level overlays that must be present in /boot/orangepiEnv.txt on every
+# generated image. I2C0 is physical header pins 3/5 and is used by the
+# supported INA219/INA226 supply monitors.
+boot_overlays:
+  - i2c0
+
 extra_packages:
   # Kamera (Canon EOS 1300D, Nikon m.fl.) via USB PTP/MTP
   - gphoto2
