@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).parents[1] / "headend" / "tools" / "fetch_python_bundle.py"
 SPEC = importlib.util.spec_from_file_location("fetch_python_bundle_test", MODULE_PATH)
