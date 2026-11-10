@@ -24,6 +24,18 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### `codex/fix-os-offline-local-repo` — Edge offline-APT absolut index
+
+- **Mandat/session:** Codex, 2026-11-10, som fortsættelse af Peters ønske om at få update-flowet sikkert end-to-end før præsentationen.
+- **Formål/scope:** Rette den resterende APT 2.8-fejl fra Edge1-kandidat #353 uden at løsne offline-, signatur- eller versionsbindingen.
+- **Berørte domæner/kontrakter:** `headend/tools/fetch_os_bundle.py`, generator-/artifact-validator-tests og update-flowets offline trust boundary.
+- **Base/head:** `origin/main@34457728`; branch `codex/fix-os-offline-local-repo`; PR oprettes efter test/review.
+- **Overlap/restdisposition:** Bygger direkte oven på merged #314/#315. #351 og #353 er fejlede historiske forsøg og må ikke genbruges; #352 er en separat manuel funktionel OS-kandidat og forbliver urørt. Ingen anden åben PR fundet med samme generatorfil ved opstart.
+- **Evidens:** Isoleret Edge1-simulation med de nøjagtige 236 signerede/deponerede `.deb`-filer gav 236 upgrades, 0 nye, 0 fjernede, 0 tilbageholdte. `dpkg-scanpackages` gav 236 absolutte `Filename`-felter; APT-lister, source-list og cache lå kun i `/tmp`; ingen pakker blev installeret.
+- **Næste handling:** Test, sikkerhedsreview, PR/CI/merge, Headend-deploy; derefter ny kandidat/artifact og fuld runtime-observation. Supersede #353 med bevaret auditspor.
+- **Blokeringsansvarlig:** Codex aktivt spor.
+- **Opfølgning:** Efter merge og efter live postflight.
+
 ### #214 — `claude/globalconfig-parallel-load`
 
 - **Mandat/session:** Claude (oprindelig forfatter). Rebase udført af Kimi 2026-09-13 under Peters mandat.
