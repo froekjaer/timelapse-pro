@@ -124,7 +124,7 @@ from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
 from services.update_supersession import device_already_at_update_version, close_targets_for_superseded_updates, reset_stale_targets_on_block, supersede_pending_app_updates
-from services.update_batch_reconciliation import artifact_matches_update_packages as _artifact_matches_update_packages, artifact_package_targets as _artifact_package_targets, normalized_package_targets as _normalized_package_targets, package_targets_fingerprint as _package_targets_fingerprint, refresh_os_catalog_devices, refresh_python_catalog_devices, supersede_changed_batch_candidate
+from services.update_batch_reconciliation import artifact_matches_update_packages as _artifact_matches_update_packages, artifact_package_targets as _artifact_package_targets, ignored_terminal_update_report, normalized_package_targets as _normalized_package_targets, package_targets_fingerprint as _package_targets_fingerprint, refresh_os_catalog_devices, refresh_python_catalog_devices, supersede_changed_batch_candidate, update_policy_ticket_error
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services.config_merge import merge_missing_defaults as _merge_missing_defaults
@@ -10576,9 +10576,9 @@ def get_update_policy(
         if not _update_applies_to_device(u, device, inventory):
             continue
         artifact = _find_artifact_for_update(db, u)
-        artifact_gate_error = None
+        artifact_gate_error = update_policy_ticket_error(db, u, artifact, ticket_model=ChangeTicket)
         try:
-            _assert_update_has_required_artifact(db, u)
+            if not artifact_gate_error: _assert_update_has_required_artifact(db, u)
         except HTTPException as exc:
             artifact_gate_error = str(exc.detail)
         if artifact_gate_error:
@@ -10608,7 +10608,6 @@ def get_update_policy(
             "severity":    u.severity,
             "artifact":    _artifact_for_edge_policy(db, artifact),
         })
-
     return {**policy, "pending_updates": filtered}
 
 @app.post("/api/updates/report")
@@ -10632,6 +10631,7 @@ def report_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
+    if ignored := ignored_terminal_update_report(u, device_id, status, logger=log): return ignored
     authorized_target = db.query(UpdateTarget).filter_by(
         pending_update_id=u.id,
         device_id=device_id,

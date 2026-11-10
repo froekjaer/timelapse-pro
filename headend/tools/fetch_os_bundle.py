@@ -380,6 +380,21 @@ mkdir -p "$local_lists/partial" "$local_cache/partial"
 chown _apt:root "$local_lists/partial" "$local_cache/partial"
 chmod 0700 "$local_lists/partial" "$local_cache/partial"
 cp -f packages/*.deb "$local_repo/"
+# APT 2.8's file method can pass a relative, percent-encoded cache basename to
+# dpkg even when Packages contains an absolute Filename. Pre-populate APT's
+# isolated cache under the exact canonical basename so installation never
+# crosses that file-method handoff. Debian package/version/arch fields have a
+# restricted alphabet; reject anything unexpected before constructing a path.
+for deb in "$local_repo"/*.deb; do
+  package_name="$(dpkg-deb -f "$deb" Package)"
+  package_version="$(dpkg-deb -f "$deb" Version)"
+  package_arch="$(dpkg-deb -f "$deb" Architecture)"
+  [[ "$package_name" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]
+  [[ "$package_version" =~ ^[A-Za-z0-9.+:~_-]+$ ]]
+  [[ "$package_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+  cache_version="${{package_version//:/%3a}}"
+  cp -f -- "$deb" "$local_cache/${{package_name}}_${{cache_version}}_${{package_arch}}.deb"
+done
 # Scan den absolutte sti (ikke `.`), så APT 2.8 får absolutte Filename-felter.
 dpkg-scanpackages --multiversion "$local_repo" /dev/null > "$local_repo/Packages"
 chmod -R a+rX "$local_repo" "$local_lists" "$local_cache"

@@ -142,3 +142,28 @@ def test_progress_status_never_flips_global_status(db_session):
         assert update.status == "approved"
         assert update.deployed_count == 0
         assert update.failed_count == 0
+
+
+@pytest.mark.parametrize("terminal_status", ["superseded", "rejected"])
+def test_late_edge_report_cannot_reopen_terminal_candidate(db_session, terminal_status):
+    _make_device(db_session, "dev-1")
+    update = _make_update(
+        db_session, scope="device", scope_id="dev-1", status=terminal_status,
+    )
+
+    result = main.report_update(
+        {
+            "update_id": update.id,
+            "status": "blocked",
+            "device_id": "dev-1",
+            "reason": "late in-flight failure",
+        },
+        authenticated_device_id="dev-1",
+        db=db_session,
+    )
+
+    db_session.refresh(update)
+    assert result == {"ok": True, "ignored": True, "reason": f"update_{terminal_status}"}
+    assert update.status == terminal_status
+    assert update.resolution_reason is None
+    assert db_session.query(database.UpdateTarget).filter_by(pending_update_id=update.id).count() == 0

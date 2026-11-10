@@ -80,6 +80,9 @@ def test_install_script_indexes_absolute_local_deb_paths():
     assert 'Dir::Cache::archives="$local_cache"' in script
     assert 'chown _apt:root "$local_lists/partial" "$local_cache/partial"' in script
     assert 'chmod 0700 "$local_lists/partial" "$local_cache/partial"' in script
+    assert 'dpkg-deb -f "$deb" Package' in script
+    assert 'cache_version="${package_version//:/%3a}"' in script
+    assert '"$local_cache/${package_name}_${cache_version}_${package_arch}.deb"' in script
 
 
 def test_install_script_never_contains_a_literal_network_url():
