@@ -71,6 +71,7 @@ from config.manager         import ConfigManager
 from diagnostics.collector  import DiagnosticsCollector
 from upload.sftp            import UploadManager
 from upload.headend_client import HeadendClient
+from headend_maintenance import HeadendMaintenanceWindow
 from security               import verify_update_artifact
 from update_lifecycle import (
     cleanup_pending_app_update,
@@ -271,7 +272,11 @@ class EdgeAgent:
         self._buffer       = CircularBuffer(config)
         self._diag         = DiagnosticsCollector(config)
         self._uploader     = UploadManager(config, self._db)
+        self._headend_maintenance = HeadendMaintenanceWindow(
+            self._cfg_mgr.base_dir / "headend-maintenance-until"
+        )
         self._api          = HeadendClient(config, config_manager)
+        self._api.set_maintenance_checker(self._headend_maintenance.active)
         self._site_look_config_client = self._init_site_look_config_client()
         self._quality      = QualityChecker(config)
         self._connectivity = self._relay.connectivity      # modem auto-cycle monitor
@@ -2792,6 +2797,8 @@ class EdgeAgent:
             "edge/scripts/timelapse-wifi-ap.sh",
             "edge/scripts/gen-bt-cert.sh",
             "edge/scripts/sync-time.sh",
+            "edge/scripts/watchdog.sh",
+            "edge/scripts/timelapse_edge_maintenance.sh",
             "edge/scripts/timelapse_system_baseline.py",
             "edge/scripts/timelapse_bt_address.py",
             "edge/scripts/timelapse_nightly_reboot.py",
@@ -3553,6 +3560,12 @@ class EdgeAgent:
             if ok and resp:
                 log.info("Sync poll sent OK")
                 self._connectivity.report_success()
+                try:
+                    self._headend_maintenance.update(resp.get("headend_maintenance_until"))
+                except OSError as exc:
+                    # Advisory state must fail open and must never abort config,
+                    # key or update-policy processing from a successful sync.
+                    log.warning("Could not persist Headend maintenance announcement: %s", exc)
                 self._sync_time_from_headend(resp)
                 if inventory_payload is not None:
                     self._last_inventory = datetime.now(timezone.utc)
@@ -3587,9 +3600,18 @@ class EdgeAgent:
                 if not self._reconcile_pending_app_update():
                     self._apply_update_policy(resp)
             else:
-                log.warning("Sync poll failed — headend unreachable")
-                self._connectivity.report_failure()
+                if getattr(self, "_headend_maintenance", None) and self._headend_maintenance.active():
+                    # Expected, bounded Headend outage: do not create warning
+                    # journal events or power-cycle a healthy Edge modem.
+                    log.info("Sync paused — announced Headend maintenance window is active")
+                else:
+                    log.warning("Sync poll failed — headend unreachable")
+                    self._connectivity.report_failure()
         except Exception as exc:
+            # HeadendClient converts expected network failures to (False,
+            # None), handled narrowly above. Anything reaching this handler is
+            # an Edge-side diagnostics/database/code failure and must never be
+            # hidden by a Headend maintenance announcement.
             log.warning("Sync poll error: %s", exc)
             self._connectivity.report_failure()
         finally:

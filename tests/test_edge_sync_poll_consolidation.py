@@ -30,6 +30,8 @@ def _make_agent():
     agent._diag = MagicMock(collect=MagicMock(return_value={"cpu_temperature": 42.0}))
     agent._db = MagicMock(capture_stats=MagicMock(return_value={}))
     agent._connectivity = MagicMock()
+    agent._headend_maintenance = MagicMock()
+    agent._headend_maintenance.active.return_value = False
     agent._last_heartbeat = None
     agent._last_inventory = None
     agent._cfg = {}
@@ -202,6 +204,51 @@ def test_run_sync_reports_failure_and_does_not_apply_anything_when_sync_fails():
     agent._apply_update_policy.assert_not_called()
     agent._connectivity.report_failure.assert_called_once()
     agent._connectivity.report_success.assert_not_called()
+
+
+def test_announced_headend_reboot_does_not_alarm_or_cycle_modem():
+    agent = _make_agent()
+    agent._headend_maintenance.active.return_value = True
+    agent._collect_siem_events_for_sync = MagicMock(return_value=[])
+    agent._collect_inventory_if_due = MagicMock(return_value=None)
+    agent._apply_fetched_config = MagicMock()
+    agent._apply_update_policy = MagicMock()
+    agent._api = MagicMock(sync=MagicMock(return_value=(False, None)))
+
+    agent._run_sync()
+
+    agent._connectivity.report_failure.assert_not_called()
+    agent._connectivity.report_success.assert_not_called()
+
+
+def test_edge_internal_error_is_not_hidden_by_headend_maintenance():
+    agent = _make_agent()
+    agent._headend_maintenance.active.return_value = True
+    agent._diag.collect.side_effect = RuntimeError("diagnostics failed")
+    agent._api = MagicMock()
+
+    agent._run_sync()
+
+    agent._api.sync.assert_not_called()
+    agent._connectivity.report_failure.assert_called_once()
+
+
+def test_successful_sync_caches_bounded_headend_maintenance_announcement():
+    agent = _make_agent()
+    agent._collect_siem_events_for_sync = MagicMock(return_value=[])
+    agent._collect_inventory_if_due = MagicMock(return_value=None)
+    agent._apply_fetched_config = MagicMock()
+    agent._apply_update_policy = MagicMock()
+    agent._sync_time_from_headend = MagicMock()
+    agent._reconcile_pending_app_update = MagicMock(return_value=False)
+    expiry = "2026-11-10T03:20:00+00:00"
+    agent._api = MagicMock(sync=MagicMock(return_value=(True, {
+        "pending_updates": [], "headend_maintenance_until": expiry,
+    })))
+
+    agent._run_sync()
+
+    agent._headend_maintenance.update.assert_called_once_with(expiry)
 
 
 def test_collect_siem_events_for_sync_does_not_post_directly(monkeypatch, tmp_path):

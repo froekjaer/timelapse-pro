@@ -19,7 +19,7 @@ from urllib.parse import quote
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -123,6 +123,17 @@ class HeadendClient:
         self._device_id  = device.get("device_id", "unknown")
         self._base_url   = device.get("headend_url", "").rstrip("/")
         self._cfg_mgr    = config_manager
+        self._maintenance_checker: Callable[[], bool] = lambda: False
+
+    def set_maintenance_checker(self, checker: Callable[[], bool]) -> None:
+        """Set the bounded, locally cached planned-Headend-outage predicate."""
+        self._maintenance_checker = checker
+
+    def _planned_maintenance_active(self) -> bool:
+        try:
+            return bool(self._maintenance_checker())
+        except Exception:
+            return False
 
     @property
     def _session(self) -> requests.Session:
@@ -616,10 +627,26 @@ class HeadendClient:
             if resp.status_code in (200, 201):
                 log.info("API call complete: method=POST path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)
                 return True, resp.json()
-            log.warning("API call failed: method=POST path=%s status=%s duration_ms=%s response=%s", path, resp.status_code, elapsed_ms, resp.text[:200])
+            if resp.status_code >= 500 and self._planned_maintenance_active():
+                log.info("API temporarily unavailable during announced Headend maintenance: method=POST path=%s status=%s", path, resp.status_code)
+            else:
+                log.warning("API call failed: method=POST path=%s status=%s duration_ms=%s response=%s", path, resp.status_code, elapsed_ms, resp.text[:200])
+            return False, None
+        except requests.exceptions.SSLError as exc:
+            # TLS failures are never hidden by a maintenance announcement.
+            log.warning("POST %s TLS verification failed: %s", path, exc)
             return False, None
         except requests.exceptions.ConnectionError:
-            log.warning("POST %s: headend unreachable", path)
+            if self._planned_maintenance_active():
+                log.info("POST %s paused during announced Headend maintenance", path)
+            else:
+                log.warning("POST %s: headend unreachable", path)
+            return False, None
+        except requests.exceptions.Timeout:
+            if self._planned_maintenance_active():
+                log.info("POST %s timed out during announced Headend maintenance", path)
+            else:
+                log.warning("POST %s timed out", path)
             return False, None
         except Exception as exc:
             log.warning("POST %s failed: %s", path, exc)

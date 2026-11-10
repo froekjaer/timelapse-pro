@@ -29,6 +29,9 @@ LOG="/var/log/timelapse-nightly-maintenance.log"
 DATA_ROOT="/Volumes/data-fast"
 MAINTENANCE_MARKER="/etc/timelapse/maintenance-until"
 MAINTENANCE_WINDOW_MINUTES=20
+# Edges normally sync every five minutes. Publish the bounded maintenance
+# window first and allow one full poll interval plus margin before shutdown.
+EDGE_ANNOUNCEMENT_SECONDS=360
 
 log() {
   print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [nightly-maintenance] $*" | tee -a "$LOG"
@@ -69,6 +72,8 @@ fi
 mkdir -p "$(dirname "$MAINTENANCE_MARKER")"
 if date -v+"${MAINTENANCE_WINDOW_MINUTES}"M -u "+%Y-%m-%dT%H:%M:%SZ" > "$MAINTENANCE_MARKER"; then
   log "maintenance window marker written: suppressing connectivity alerts for ${MAINTENANCE_WINDOW_MINUTES}m"
+  log "announcing planned reboot to Edges for ${EDGE_ANNOUNCEMENT_SECONDS}s before shutdown"
+  sleep "$EDGE_ANNOUNCEMENT_SECONDS"
 else
   log "WARNING: could not write maintenance marker — reboot will proceed, alerts will NOT be suppressed"
 fi

@@ -40,6 +40,7 @@ from cmdb import report_inventory as _cmdb_report_inventory, _decrypt as _bg_dec
 from siem import ingest_events as _siem_ingest_events
 from technician_keys import resolve_authorized_technician_keys
 from auth import get_current_user as _auth_get_current_user
+from maintenance_window import maintenance_window_end
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["Edge Sync"])
@@ -180,8 +181,13 @@ async def edge_sync(
 
         db.commit()
 
+    maintenance_end = maintenance_window_end()
     return {
         "server_time": hb_result["server_time"],
+        # Narrow, expiring availability signal. The authenticated Edge uses it
+        # only to suppress Headend-connectivity fault handling during a planned
+        # reboot; it never suppresses camera, capture, storage or security events.
+        "headend_maintenance_until": maintenance_end.isoformat() if maintenance_end else None,
         "config_version": hb_result["config_version"],
         "config": cfg,
         "pending_updates": policy.get("pending_updates", []),

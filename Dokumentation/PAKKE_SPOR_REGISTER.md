@@ -24,6 +24,19 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### `codex/edge-management-recovery` — fail-safe genopretning af Edge-agent og management-tunnel
+
+- **Mandat/session:** Codex, 2026-11-10, efter Peters eksplicitte krav om en permanent løsning på tabet af Edge1-adgang, da `timelapse-edge.service` blev stoppet via den eneste aktive management-kanal.
+- **Formål/scope:** Gør den uafhængige Edge-watchdog ansvarlig for at genstarte en manuelt stoppet/inaktiv agent; tillad kun bevidst stop via et kort, udløbende maintenance-hold; hold watchdoggens systemd-livscyklus uafhængig af agenten. Headend annoncerer desuden sit planlagte reboot-vindue gennem den autentificerede sync, så Edge hverken genererer connectivity-alarmstøj eller power-cycler modemmet under den forventede afbrydelse. Verificér recovery, tunnel-retur og automatisk udløb før levering/deploy.
+- **Berørte domæner/kontrakter:** `edge/scripts/watchdog.sh`, `edge/scripts/timelapse-watchdog.service`, nyt tidsbegrænset maintenance-control-script, `headend/maintenance_window.py`, `headend/edge_sync.py`, Edge sync/connection-monitorering, natligt reboot-script, Edge image/release-kontrakter og relevante tests. Availability- og management trust boundary.
+- **Base/head:** `origin/main@33fde472`; branch `codex/edge-management-recovery`; isoleret worktree. PR oprettes efter test og review.
+- **Overlap/restdisposition:** PR #253 (`codex/edge-network-tunnel-health`) har nyttig, umerget tunnel-health/stale-tunnel-funktionalitet og bevares som separat spor; denne leverance erstatter ikke dens UI/Headend-verifikation. PR #274 er et docs-only SSH-adgangsdesign og ændres ikke. Historisk PR #163 rører watchdog/update-health, men dens rester er stabilitetsvindue + Headend-sweeper, ikke manuel-stop recovery; de bevares i registeret.
+- **Evidens:** Edge1 port 2201 svarer igen; `timelapse-edge.service` er `active/enabled` med `Restart=always`; `timelapse-watchdog.service` er `enabled` og kører med `Restart=always`. Før ændringen loggede `watchdog.sh` kun “systemd will handle restart” og kaldte aldrig `systemctl start`. Kandidaten kører den rigtige shell-recovery mod fake systemctl og verificerer aktiv service; 116 målrettede + 56 bredere kontrakt/arkitektur-tests består. Codex Security diff-scan `0ed96274-8a1a-4739-aca3-d1c6f2a5f7b3`: complete, 0 resterende fund.
+- **Cross-repo/publication:** TimeLapse-mekanikken er lokal. Den generiske invariant “fjernændring må ikke fjerne sidste management/control-kanal uden uafhængig, tidsbegrænset, observerbar recovery” blev ikke fundet i cached OP-001 og er en upstream Mission Framework/Platform Finding-kandidat. Holdes eksplicit åben i dette spor til live-bevis og Peters disposition; ejer Codex/Peter.
+- **Næste handling:** PR/CI/merge og signeret release. Første kontrollerede runtime-test må først udføres efter read-back af installeret watchdog/script/unit; observer agent + tunnel-retur, capture/upload og derefter kort maintenance-hold/udløb.
+- **Blokeringsansvarlig:** Codex aktivt spor.
+- **Opfølgning:** Efter PR/CI og efter observeret Edge1 runtime-recovery.
+
 ### `codex/fix-update-terminal-and-apt-cache` — terminal update-status + Edge offline-APT cache
 
 - **Mandat/session:** Codex, 2026-11-10, som fortsættelse af Peters ønske om at få update-flowet sikkert end-to-end før præsentationen.
