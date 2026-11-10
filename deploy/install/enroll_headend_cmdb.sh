@@ -84,7 +84,7 @@ token_path.write_text(result["api_token"] + "\n")
 token_path.chmod(0o600)
 PY
 
-LOG_FILE="/var/log/timelapse-node-agent.log"
+LOG_FILE="/Library/Logs/TimeLapsePro/node-agent.log"
 LOG_START_LINE=1
 if [[ -f "$LOG_FILE" ]]; then
   LOG_START_LINE=$(( $(wc -l < "$LOG_FILE") + 1 ))

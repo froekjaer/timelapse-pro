@@ -123,7 +123,8 @@ from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
-from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
+from services.update_supersession import device_already_at_update_version, close_targets_for_superseded_updates, reset_stale_targets_on_block, supersede_pending_app_updates
+from services.update_batch_reconciliation import artifact_matches_update_packages as _artifact_matches_update_packages, artifact_package_targets as _artifact_package_targets, normalized_package_targets as _normalized_package_targets, package_targets_fingerprint as _package_targets_fingerprint, refresh_os_catalog_devices, refresh_python_catalog_devices, supersede_changed_batch_candidate
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services.config_merge import merge_missing_defaults as _merge_missing_defaults
@@ -6246,6 +6247,17 @@ def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtif
     return next((a for a in [q.filter(UpdateArtifact.version == version).first()] if is_deployable_artifact(a)), None)
 
 
+def _supersede_changed_batch_candidate(
+    db: Session,
+    update: PendingUpdate,
+    reason: str,
+) -> None:
+    supersede_changed_batch_candidate(
+        db, update, reason, target_model=UpdateTarget, ticket_model=ChangeTicket,
+        close_targets=close_targets_for_superseded_updates, now_utc=now_utc,
+    )
+
+
 def _release_signer_matches(signed_by: str | None, signer: dict) -> bool:
     """Match a credential id, full GPG fingerprint, or 64-bit GPG key id."""
     candidate = str(signed_by or "").strip()
@@ -6583,6 +6595,18 @@ def _assert_update_has_required_artifact(db: Session, update: PendingUpdate) -> 
             detail=(
                 "Opdateringen mangler Headend-signeret artifact. "
                 "Edge må ikke installere via direkte internet/GitHub/apt."
+            ),
+        )
+    if (
+        artifact
+        and update.update_type in {"os_security", "os_updates", "dependency_security", "dependency_updates"}
+        and not _artifact_matches_update_packages(artifact, update.package_details)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Det bundne artifacts signerede package targets matcher ikke den aktuelle kandidat. "
+                "Kandidaten skal supersedes og have et nyt artifact før godkendelse."
             ),
         )
     return artifact
@@ -7508,22 +7532,48 @@ def _upsert_blocked_os_updates_from_plan(
             .order_by(PendingUpdate.created_at.desc())
             .first()
         )
-        description = (
+        description_base = (
             f"{count} {label} klar via Headend lab-katalog ({catalog_source or 'unknown source'}).\n"
             f"Plan: {plan_path}\n"
-            "Blocked: afventer lab-bygget, testet og Headend-signeret offline OS artifact. "
-            "Edge må ikke bruge direkte apt/internet."
         )
         package_details = json.dumps(decision.get("packages") or [])
         if existing:
+            old_fingerprint = _package_targets_fingerprint(existing.package_details)
+            new_fingerprint = _package_targets_fingerprint(package_details)
+            artifact = _find_artifact_for_update(db, existing)
+            candidate_changed = old_fingerprint != new_fingerprint
+            artifact_stale = bool(artifact) and not _artifact_matches_update_packages(artifact, package_details)
+            if candidate_changed or artifact_stale:
+                reason = (
+                    f"Superseded by a newer {update_type} package candidate for {device_id}; "
+                    "the previous signed artifact/ticket is preserved as audit evidence and must not be reused."
+                )
+                _supersede_changed_batch_candidate(db, existing, reason)
+                existing = None
+
+        if existing:
             existing.version = version
-            existing.description = description
             existing.severity = severity
             existing.environment = environment
             existing.package_details = package_details
-            if existing.status != "approved":
+            artifact = _find_artifact_for_update(db, existing)
+            if artifact and _artifact_matches_update_packages(artifact, package_details):
+                if existing.status == "blocked":
+                    existing.status = "pending"
+                existing.resolution_reason = "Matching signed offline OS artifact is bound; awaiting approval."
+                existing.description = (
+                    description_base
+                    + f"Ready: matching signed offline OS artifact {artifact.artifact_id} is bound. "
+                    "Edge does not require direct apt/internet."
+                )
+            elif existing.status != "approved":
                 existing.status = "blocked"
                 existing.resolution_reason = "Awaiting lab-built, tested, Headend-signed offline OS artifact."
+                existing.description = (
+                    description_base
+                    + "Preparing: awaiting lab-built, tested and Headend-signed offline OS artifact. "
+                    "Edge must not use direct apt/internet."
+                )
                 if existing.id is not None:
                     reset_stale_targets_on_block(
                         db, UpdateTarget, existing.id,
@@ -7534,7 +7584,11 @@ def _upsert_blocked_os_updates_from_plan(
         update = PendingUpdate(
             update_type=update_type,
             version=version,
-            description=description,
+            description=(
+                description_base
+                + "Preparing: awaiting lab-built, tested and Headend-signed offline OS artifact. "
+                "Edge must not use direct apt/internet."
+            ),
             severity=severity,
             scope="device",
             scope_id=device_id,
@@ -8161,67 +8215,13 @@ def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
 
 
 def _os_catalog_refresh_pending_devices() -> None:
-    """
-    Finder alle enheder med apt-baseret CMDB-inventory og reconciler deres
-    seneste package-inventory mod et katalog genereret via
-    _generate_os_update_catalog_candidates() (Headend Docker/arm64-builder,
-    falder tilbage til Ubuntu-metadata uden Docker). Opretter/opdaterer
-    blokerede os_security/os_updates PendingUpdate-rækker med Plan-reference
-    via import_os_catalog_from_lab_apt_list().
-
-    Bruger et system-principal, samme mønster som _os_bundle_auto_build_pending()
-    (U-12: ingen automatisk build/katalog-refresh må tilskrives en rigtig
-    admin-konto der aldrig så eller godkendte det).
-    """
-    db = SessionLocal()
-    try:
-        devices = (
-            db.query(DeviceInventory)
-            .filter(DeviceInventory.package_manager.ilike("%apt%"))
-            .order_by(DeviceInventory.device_id)
-            .all()
-        )
-        if not devices:
-            return
-
-        system_user = User(username="system:os-catalog-refresh", role="system", password_hash="")
-
-        for inv in devices:
-            device_id = (inv.device_id or "").strip()
-            if not device_id or not inv.os_packages:
-                continue
-            try:
-                installed = json.loads(inv.os_packages or "{}")
-            except Exception:
-                installed = {}
-            if not isinstance(installed, dict) or not installed:
-                continue
-            try:
-                generated = _generate_os_update_catalog_candidates(
-                    installed=installed,
-                    device_id=device_id,
-                    architecture="arm64",
-                    image=_default_ubuntu_image_for_device(inv),
-                )
-                import_os_catalog_from_lab_apt_list(
-                    OsCatalogImportPayload(
-                        device_id=device_id,
-                        apt_list_text=generated["apt_list_text"],
-                        source=f"headend-scheduled-cmdb-refresh:{now_utc():%Y-%m-%d}",
-                        environment=inv.environment or "lab",
-                        create_updates=True,
-                    ),
-                    system_user,
-                    db,
-                )
-                db.commit()
-                log.info("OS-katalogopdagelse: opdateret for %s", device_id)
-            except Exception as exc:
-                db.rollback()
-                log.warning("OS-katalogopdagelse: fejl for %s: %s", device_id, exc)
-    finally:
-        db.close()
-
+    refresh_os_catalog_devices(
+        session_factory=SessionLocal, inventory_model=DeviceInventory, user_model=User,
+        generate=_generate_os_update_catalog_candidates,
+        default_image=_default_ubuntu_image_for_device,
+        import_catalog=import_os_catalog_from_lab_apt_list,
+        payload_model=OsCatalogImportPayload, now_utc=now_utc, logger=log,
+    )
 
 def _reconcile_python_packages_from_pypi(installed: dict, required_text: str = "") -> dict:
     """
@@ -8298,11 +8298,10 @@ def _upsert_blocked_python_updates_from_plan(
         return changes
     count = decision["package_count"]
     names = ", ".join(p["name"] for p in decision["packages"][:10])
-    description = (
+    description_base = (
         f"{count} Python-afhængighed(er) klar via Headend PyPI-reconciliation ({catalog_source}).\n"
         f"Plan: {plan_path}\n"
         f"Første pakker: {names}{'…' if count > 10 else ''}. "
-        "Blocked: afventer Headend-signeret offline wheel-bundle før godkendelse."
     )
     version = f"{count} pakker"
     package_details = json.dumps(decision["packages"])
@@ -8313,25 +8312,48 @@ def _upsert_blocked_python_updates_from_plan(
         PendingUpdate.status.in_(["pending", "approved", "blocked"]),
     ).first()
     if existing:
+        old_fingerprint = _package_targets_fingerprint(existing.package_details)
+        new_fingerprint = _package_targets_fingerprint(package_details)
+        artifact = _find_artifact_for_update(db, existing)
+        candidate_changed = old_fingerprint != new_fingerprint
+        artifact_stale = bool(artifact) and not _artifact_matches_update_packages(artifact, package_details)
+        if candidate_changed or artifact_stale:
+            reason = (
+                f"Superseded by a newer dependency package candidate for {device_id}; "
+                "the previous signed artifact/ticket is preserved as audit evidence and must not be reused."
+            )
+            _supersede_changed_batch_candidate(db, existing, reason)
+            existing = None
+
+    if existing:
         existing.version = version
-        existing.description = description
         existing.severity = "medium"
         existing.environment = environment
-        existing.status = "blocked"
-        existing.resolution_reason = "Awaiting Headend-signed offline Python wheel bundle."
         existing.package_details = package_details
-        if existing.id is not None:
-            reset_stale_targets_on_block(
-                db, UpdateTarget, existing.id,
-                f"Parent update blocked {now_utc().isoformat()}: awaiting signed Python wheel bundle.",
+        artifact = _find_artifact_for_update(db, existing)
+        if artifact and _artifact_matches_update_packages(artifact, package_details):
+            if existing.status == "blocked":
+                existing.status = "pending"
+            existing.resolution_reason = "Matching signed offline Python wheel bundle is bound; awaiting approval."
+            existing.description = (
+                description_base + f"Ready: matching signed wheel bundle {artifact.artifact_id} is bound."
             )
+        else:
+            existing.status = "blocked"
+            existing.resolution_reason = "Awaiting Headend-signed offline Python wheel bundle."
+            existing.description = description_base + "Preparing: awaiting Headend-signed offline wheel bundle."
+            if existing.id is not None:
+                reset_stale_targets_on_block(
+                    db, UpdateTarget, existing.id,
+                    f"Parent update blocked {now_utc().isoformat()}: awaiting signed Python wheel bundle.",
+                )
         changes.append({"update_type": "dependency_updates", "status": "updated", "id": existing.id})
         return changes
 
     update = PendingUpdate(
         update_type="dependency_updates",
         version=version,
-        description=description,
+        description=description_base + "Preparing: awaiting Headend-signed offline wheel bundle.",
         severity="medium",
         scope="device",
         scope_id=device_id,
@@ -8347,59 +8369,13 @@ def _upsert_blocked_python_updates_from_plan(
 
 
 def _python_catalog_refresh_pending_devices() -> None:
-    """
-    Finder alle enheder med rapporterede venv_packages og reconciler dem mod
-    PyPI (se _reconcile_python_packages_from_pypi()). Opretter/opdaterer
-    blokerede dependency_updates PendingUpdate-rækker med Plan-reference,
-    samme mønster som _os_catalog_refresh_pending_devices() men for Python.
-    """
-    db = SessionLocal()
-    try:
-        devices = (
-            db.query(DeviceInventory)
-            .filter(DeviceInventory.venv_packages.isnot(None))
-            .order_by(DeviceInventory.device_id)
-            .all()
-        )
-        system_user = User(username="system:python-catalog-refresh", role="system", password_hash="")
-
-        for inv in devices:
-            device_id = (inv.device_id or "").strip()
-            if not device_id:
-                continue
-            try:
-                installed = json.loads(inv.venv_packages or "{}")
-            except Exception:
-                installed = {}
-            if not isinstance(installed, dict) or not installed:
-                continue
-            try:
-                decisions = _reconcile_python_packages_from_pypi(installed, _edge_requirements_text(_repo_root()))
-                if not decisions:
-                    continue
-                created_at = now_utc()
-                environment = inv.environment or "lab"
-                plan = {
-                    "schema": "dk.froekjaer.timelapse.python_update_plan.v1",
-                    "source": "headend-cmdb-pypi-reconcile",
-                    "generated_at": created_at.isoformat(),
-                    "device_id": device_id,
-                    "environment": environment,
-                    "decisions": decisions,
-                }
-                stamp = f"{device_id}-{created_at:%Y%m%d-%H%M%S}"
-                plan_path = _write_update_json("python-update-plans", f"{stamp}.json", plan)
-                _upsert_blocked_python_updates_from_plan(
-                    db, device_id, environment, decisions,
-                    f"headend-scheduled-pypi-refresh:{created_at:%Y-%m-%d}", plan_path,
-                )
-                db.commit()
-                log.info("Python-katalogopdagelse: opdateret for %s", device_id)
-            except Exception as exc:
-                db.rollback()
-                log.warning("Python-katalogopdagelse: fejl for %s: %s", device_id, exc)
-    finally:
-        db.close()
+    refresh_python_catalog_devices(
+        session_factory=SessionLocal, inventory_model=DeviceInventory, user_model=User,
+        reconcile=lambda installed, _required: _reconcile_python_packages_from_pypi(installed, _edge_requirements_text(_repo_root())),
+        requirements_text=lambda: _edge_requirements_text(_repo_root()),
+        write_json=_write_update_json, upsert=_upsert_blocked_python_updates_from_plan,
+        now_utc=now_utc, logger=log,
+    )
 
 
 # ── Automatisk OS bundle builder ──────────────────────────────────────────────
@@ -8471,6 +8447,20 @@ def _os_bundle_auto_build_pending() -> None:
             # Tjek om artifact allerede er bundet
             existing_artifact = _find_artifact_for_update(db, update)
             if existing_artifact:
+                if _artifact_matches_update_packages(existing_artifact, update.package_details):
+                    if update.status == "blocked":
+                        update.status = "pending"
+                        update.resolution_reason = (
+                            "Matching signed offline artifact is bound; awaiting approval."
+                        )
+                        db.commit()
+                    continue
+                update.status = "blocked"
+                update.resolution_reason = (
+                    f"Bound artifact {existing_artifact.artifact_id} does not match the current "
+                    "package candidate; catalog reconciliation must supersede this row before rebuild."
+                )
+                db.commit()
                 continue
 
             device_id = (update.scope_id or "").strip()
@@ -8686,7 +8676,7 @@ def _auto_build_and_bind_os_bundle(
             "source_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
             "lab_evidence": {
                 "builder": "fetch_os_bundle.py (headend-auto)",
-                "packages_requested": result["packages_requested"],
+                "packages_requested": packages,
                 "deb_files": result["deb_files"],
                 "not_found": result["not_found"],
                 "version_drifts": result["version_drifts"],
@@ -9322,6 +9312,15 @@ def bind_artifact_to_update(
         raise HTTPException(status_code=400, detail="Python dependency updates kræver dependency artifact")
     if update.update_type not in {"dependency_security", "dependency_updates"} and artifact.artifact_type == "dependency":
         raise HTTPException(status_code=400, detail="Dependency artifact kan kun bindes til dependency updates")
+    if update.update_type in {"os_security", "os_updates", "dependency_security", "dependency_updates"}:
+        if not _artifact_matches_update_packages(artifact, update.package_details):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Artifactets signerede package targets matcher ikke den aktuelle update-kandidat. "
+                    "Genopfrisk kataloget, supersede den gamle kandidat og byg et nyt artifact."
+                ),
+            )
 
     ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
     if not ticket:
@@ -10577,17 +10576,22 @@ def get_update_policy(
         if not _update_applies_to_device(u, device, inventory):
             continue
         artifact = _find_artifact_for_update(db, u)
-        if _update_requires_headend_artifact(u.update_type) and not artifact:
+        artifact_gate_error = None
+        try:
+            _assert_update_has_required_artifact(db, u)
+        except HTTPException as exc:
+            artifact_gate_error = str(exc.detail)
+        if artifact_gate_error:
             log.warning(
-                "Approved update %s/%s withheld from Edge policy for %s: missing signed artifact",
-                u.id, u.update_type, device_id,
+                "Approved update %s/%s withheld from Edge policy for %s: %s",
+                u.id, u.update_type, device_id, artifact_gate_error,
             )
             u.status = "blocked"
             u.description = ((u.description or "").rstrip() + (
                 f"\n\nBlocked {now_utc().isoformat()}: approved update withheld from Edge policy "
-                "because it lacks required Headend-signed artifact."
+                f"because the artifact gate failed: {artifact_gate_error}"
             ))[-6000:]
-            u.resolution_reason = "Approved update withheld from Edge policy: missing required Headend-signed artifact."
+            u.resolution_reason = f"Approved update withheld from Edge policy: {artifact_gate_error}"[:1000]
             if u.id is not None:
                 reset_stale_targets_on_block(
                     db, UpdateTarget, u.id,

@@ -585,6 +585,18 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
             PendingUpdate.status.in_(["blocked", "pending", "approved"]),
         ).first()
         if existing:
+            # Edge's own apt cache is intentionally stale/offline and is only
+            # an observation source. Once Headend has produced a catalog Plan,
+            # this report must not overwrite that authoritative candidate,
+            # package set, artifact readiness or approval state. The scheduled
+            # Headend catalog reconciliation owns subsequent candidate changes.
+            if "Plan:" in str(existing.description or ""):
+                log.debug(
+                    "CMDB: bevarer Headend-katalogkandidat #%s for %s; "
+                    "Edge apt-observation er ikke autoritativ efter Plan",
+                    existing.id, device_id,
+                )
+                return
             existing.version = version
             existing.description = desc
             existing.severity = "high" if "security" in update_type else "medium"

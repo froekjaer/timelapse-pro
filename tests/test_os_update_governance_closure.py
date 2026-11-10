@@ -13,12 +13,14 @@ def test_cmdb_os_inventory_is_observation_only_not_deployable_pending_work():
     assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
 
 
-def test_existing_cmdb_observation_is_forced_back_to_blocked():
+def test_existing_raw_cmdb_observation_is_forced_back_to_blocked_but_plan_is_preserved():
     source = Path("headend/cmdb.py").read_text(encoding="utf-8")
     start = source.index("def _sync_edge_os_updates(")
     end = source.index("\n\n# ── Kryptering", start)
     section = source[start:end]
     assert 'existing.status = "blocked"' in section
+    assert 'if "Plan:" in str(existing.description or "")' in section
+    assert "Edge apt-observation er ikke autoritativ efter Plan" in section
 
 
 def test_zero_edge_reported_os_updates_does_not_supersede_active_os_tickets():
