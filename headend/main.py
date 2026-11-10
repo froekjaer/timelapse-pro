@@ -8371,7 +8371,7 @@ def _upsert_blocked_python_updates_from_plan(
 def _python_catalog_refresh_pending_devices() -> None:
     refresh_python_catalog_devices(
         session_factory=SessionLocal, inventory_model=DeviceInventory, user_model=User,
-        reconcile=_reconcile_python_packages_from_pypi,
+        reconcile=lambda installed, _required: _reconcile_python_packages_from_pypi(installed, _edge_requirements_text(_repo_root())),
         requirements_text=lambda: _edge_requirements_text(_repo_root()),
         write_json=_write_update_json, upsert=_upsert_blocked_python_updates_from_plan,
         now_utc=now_utc, logger=log,
