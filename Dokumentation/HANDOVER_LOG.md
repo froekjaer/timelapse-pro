@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-11-10 10:31 — fra Codex til Peter/næste session: PR #314 deployet; Edge1 afslørede APT 2.8-restfejl før installation
+- **Drift:** PR #314 er merged som `b56a61f6` og Headend kører verificeret fra en ren deploy-checkout på dette commit. Mac node-agent er geninstalleret med eksisterende config bevaret, least-privilege logplacering og frisk inventory. Aktuelle per-device kandidater #346–#352 erstatter de stale poster; den gamle globale #273/ticket er eksplicit superseded/cancelled med auditspor bevaret.
+- **Kontrolleret Edge1-runtime:** sikkerhedskandidat #351 blev auto-godkendt af den eksisterende default-policy (`os_security=auto`), tog og uploadede en 8,7 MB pre-update-backup, downloadede og SHA-verificerede det signerede 203.597.346-byte artifact og gik til installation. APT stoppede fail-closed før pakkeinstallation med `E: Internal Error, Pathname to install is not absolute`; Edge-agent, capture-loop og tunnel forblev aktive. #351 er nu `blocked/failed`; #352 er fortsat `pending` og urørt.
+- **Rodårsag/rettelse:** bundle-generatorens midlertidige `file://`-index gav APT 2.8 relative `Filename`-felter. Nyt spor `codex/fix-os-offline-absolute` fra `b56a61f6` giver i stedet APT alle signerede `.deb`-filer som absolutte `"$PWD"/packages/*.deb` i én atomisk transaktion. `--no-download`, signatur/ticket-gates, frisk root-ejet staging og efterfølgende eksakt versionsverifikation bevares.
+- **Verifikation:** 15 målrettede tests bestået, 1 miljøfixture-skipped; Python compile og `git diff --check` grønne. Codex Security diff-scan `76018861-8790-4ce4-9bb9-3c714c91bd8a` gennemgik trust-boundary, command/path injection, manifestbinding og offlinegaranti med fuld dækning og ingen fund.
+- **Næste handling:** PR/CI/merge; deploy kun Headend-generatoren, generér et nyt artifact til en frisk/supersedende Edge1-kandidat og observer download, installation, versionskontrol samt agent/capture/upload/tunnel efterfølgende. Genbrug ikke det fejlede #351-artifact. #352 må ikke godkendes i denne sekvens.
+
 
 ### Handover 2026-11-10 — fra Codex til Peter/næste session: 14 blokerede updates skyldes tre sammenfiltrede livscyklusfejl
 - **Mandat/status:** Peter bad om en holdbar forklaring og løsning på de gentagne mange “blokeret”-poster. Arbejdet foregår isoleret på `codex/update-blocked-queue-reconciliation` fra `origin/main@1e8b4bbc`; ingen produktionstilstand, artifacts eller Edge-enheder er ændret.

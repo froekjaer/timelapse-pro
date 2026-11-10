@@ -371,53 +371,21 @@ def install_script(package_file_entries: list[dict[str, Any]]) -> str:
     at their target version in Edge 2's local index, even though the correct
     .deb files were sitting right there in the bundle.
 
-    Fix: build a throwaway, file://-only local APT repository from the
-    bundle's own .debs (flat repository format: a Packages(.gz) index next
-    to the .debs, referenced via ``deb [trusted=yes] file://... ./``) and
-    refresh *only* that source's index with a sourcelist-scoped
-    ``apt-get update`` (``-o Dir::Etc::sourcelist=...``). That never touches
-    the device's real sources.list or its cached lists for those sources —
-    it only adds fresh candidate entries for exactly what's in this bundle —
-    and never performs any network I/O, since the scoped sourcelist contains
-    nothing but a local file:// path.
+    Pass every signed .deb to APT by absolute local path. APT still resolves
+    ordering and dependencies across the complete transaction, while
+    ``--no-download`` makes a missing dependency fail closed. Do not build a
+    temporary file:// repository here: APT 2.8 can retain relative
+    ``Filename`` entries and reject the transaction with ``Pathname to
+    install is not absolute`` even though every file is already local.
     """
-    requested = " ".join(
-        _shell_quote(f"{entry['name']}={entry['version']}")
-        for entry in package_file_entries
-    )
     return f"""#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
 # Kun pakker i dette signerede bundle gøres tilgængelige for APT. Der foretages
-# ingen apt update mod internettet eller netværksdownload på Edgen — kun en
-# lokal, fil-baseret APT-kilde genopbygges fra bundlets egne .deb-filer, så
-# APT kan finde kandidat-versioner uafhængigt af hvor frisk enhedens egne
-# apt-lister er.
-install -d -m 0755 /var/cache/apt/archives
-cp -f packages/*.deb /var/cache/apt/archives/
-
-local_repo="$(mktemp -d)"
-local_sourcelist="$(mktemp)"
-trap 'rm -rf "$local_repo" "$local_sourcelist"' EXIT
-# apt-get update's actual file-fetch step runs sandboxed as the unprivileged
-# "_apt" user (APT::Sandbox::User, standard on Debian/Ubuntu since the
-# CVE-2016-1252 hardening) — not as whatever user invoked apt-get. mktemp -d
-# defaults to 0700 owned by the invoking (root) user, which _apt cannot even
-# traverse into, so it fails reading the local file:// source with
-# "Permission denied" despite the whole install running as root. Found
-# 2026-09-09 breaking update #297 (Edge 2, os_security, 24 packages): the
-# local repo dir must be world-readable/traversable for _apt to reach it.
-chmod 0755 "$local_repo"
-cp -f packages/*.deb "$local_repo/"
-( cd "$local_repo" && dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz )
-chmod -R a+rX "$local_repo"
-printf 'deb [trusted=yes] file://%s ./\\n' "$local_repo" > "$local_sourcelist"
-
-apt-get -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\
-  -o APT::Get::List-Cleanup="0" update
+# ingen apt update mod internettet eller netværksdownload på Edgen. Absolutte
+# stier er påkrævet af APT 2.8 for lokale .deb-filer.
 apt-get --no-download --no-install-recommends --allow-downgrades \\
-  -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\
-  --allow-change-held-packages -y install {requested}
+  --allow-change-held-packages -y install "$PWD"/packages/*.deb
 # Verificer de faktiske versioner efter APT har afsluttet transaktionen.
 ./verify-installed.sh
 """
