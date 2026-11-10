@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-11-10 16:40 — fra ChatGPT til Peter/næste session: Edge1 servicetekniker-terminal fejler pga. manglende WebSocket-runtime dependency
+- **Symptom:** Servicetekniker-UI på Edge1 virker via Tailscale/HTTPS 8443, men `Åbn terminal` viser straks `[closed]`.
+- **Live evidens på Edge1:** `/etc/timelapse/bt-config.yaml` har `management.enable_interactive_shell: true`; `timelapse-totp.service` er active/running. `totp-service.log` viser ved hvert terminalforsøg `Unsupported upgrade request`, `No supported WebSocket library detected. Please use "pip install 'uvicorn[standard]'", or install 'websockets' or 'wsproto' manually`, efterfulgt af `GET /mgmt/cli/bash/ws HTTP/1.1` → `404 Not Found`. Ingen `totp-shell/pending_events.jsonl`-events blev skrevet, så requesten når ikke WebSocket-handler/PTY-shell.
+- **Headend-policy afkræftet:** `devices.device_config::jsonb->'service_access'` for `TL-C87FF9587CA0` har `interactive_shell_enabled: true`; central policy er ikke årsagen.
+- **Repo-evidens:** `edge/requirements.txt` på main kræver allerede `uvicorn[standard]>=0.46.0` og `websockets>=12.0`. Handover 2026-10-04 dokumenterer samme Edge1-gap (`qrcode + websockets`) og en required-but-missing Python-package reconciliation. Dagens runtime er derfor dependency drift / rollout-integritetsfejl, ikke manglende deklaration.
+- **Næste korrekte handling:** verificér faktisk venv-package state (`/opt/timelapse/venv/bin/python3 -m pip show uvicorn websockets wsproto fastapi`) og spor hvorfor dagens app-rollout ikke efterlod deklarerede runtime dependencies installeret. Undgå at behandle en manuel `pip install` som permanent løsning; package reconciliation/release health skal gøres deterministisk og regressionsdækket.
+- **Risiko:** Terminal-capability er utilgængelig, men øvrigt servicetekniker-UI fungerer. Ingen indikation af Tailscale-, TOTP-session-, Headend-policy- eller PTY-fejl i den observerede hændelse.
+
 ### Handover 2026-11-10 16:15 — fra Codex til Peter/næste session: Edge1 rollout verificeret; tre postflight-hardening-fund
 - **Runtime-resultat:** Signeret app-artifact `TL-ART-20261110-a794fb512e5a` / update #358 er installeret og rapporteret VERIFIED på Edge1. Agent, watchdog, reverse SSH-tunnel, heartbeat og inventory kom tilbage; release receipt matcher commit `a794fb512e5a891199f667f6151f141a1168781a`. Ingen reboot udført.
 - **Tidssync-rodårsag:** Edge1 var ca. 44 minutter bagud, så Headend afviste signerede kald. Timeren kørte faktisk hvert 6. minut, men `/etc/timelapse/time-sync.env` fandtes ikke; loggen viste derfor gentagne `Ingen HTTPS Headend-tidskilde konfigureret`. Den autoritative, root-beskyttede bootstrap-konfiguration indeholder allerede korrekt HTTPS Headend-URL. Cloudflare blev tilføjet til chrony som midlertidig runtime-only recovery og må ikke forveksles med den permanente løsning.
