@@ -66,7 +66,8 @@ LaunchDaemon kører least-privilege som `peter`, men stdout/stderr pegede på `/
 ## Verifikation før PR
 
 - Python compile og shell syntax: bestået.
-- 23 målrettede update-/artifact-/supersession-/node-agent-tests i en isoleret SQLite-testdatabase: bestået. En tidligere bred kørsel ramte den lokale, migrationsmæssigt forældede `timelapse_test`-database og den lokale maskines manglende node-agent; det var miljøfejl, ikke produktionsmutation eller kode-regression.
+- 27 målrettede update-/artifact-/supersession-/node-agent-/arkitekturtests i en isoleret SQLite-testdatabase: bestået. En tidligere bred kørsel ramte den lokale, migrationsmæssigt forældede `timelapse_test`-database og den lokale maskines manglende node-agent; det var miljøfejl, ikke produktionsmutation eller kode-regression.
 - UI TypeScript/Vite production build: bestået.
 - Codex Security diff-review fandt to trust-boundary-huller undervejs (slutgate for artifact-target-match og privilegeret logsti/symlink). Begge er rettet i samme diff og dækket af regressionstest; ingen åbne reportable fund efter rettelserne.
+- CI's arkitekturratchet førte batch-identitet og catalog-session-orkestrering ud af `headend/main.py` til `headend/services/update_batch_reconciliation.py`; baseline blev ikke hævet.
 - Der er ikke foretaget live DB-mutation, service-restart, artifact-build, approval eller installation.

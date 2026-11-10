@@ -123,7 +123,8 @@ from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
-from services.update_supersession import close_targets_for_superseded_updates, device_already_at_update_version, reset_stale_targets_on_block, supersede_pending_app_updates
+from services.update_supersession import device_already_at_update_version, close_targets_for_superseded_updates, reset_stale_targets_on_block, supersede_pending_app_updates
+from services.update_batch_reconciliation import artifact_matches_update_packages as _artifact_matches_update_packages, artifact_package_targets as _artifact_package_targets, normalized_package_targets as _normalized_package_targets, package_targets_fingerprint as _package_targets_fingerprint, refresh_os_catalog_devices, refresh_python_catalog_devices, supersede_changed_batch_candidate
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from services.config_merge import merge_missing_defaults as _merge_missing_defaults
@@ -6246,109 +6247,15 @@ def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtif
     return next((a for a in [q.filter(UpdateArtifact.version == version).first()] if is_deployable_artifact(a)), None)
 
 
-def _normalized_package_targets(value) -> list[dict[str, str]]:
-    """Canonical package identity used to bind a candidate to an artifact.
-
-    Installed versions are deliberately excluded: the deployable payload is
-    defined by package name + requested target version. Ordering and optional
-    catalog metadata must not create a new candidate by themselves.
-    """
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except Exception:
-            return []
-    if not isinstance(value, list):
-        return []
-    targets: dict[tuple[str, str], dict[str, str]] = {}
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip().lower().replace("_", "-")
-        target = str(
-            item.get("available_version")
-            or item.get("new_ver")
-            or item.get("version")
-            or ""
-        ).strip()
-        if name and target:
-            targets[(name, target)] = {"name": name, "available_version": target}
-    return [targets[key] for key in sorted(targets)]
-
-
-def _package_targets_fingerprint(value) -> str | None:
-    targets = _normalized_package_targets(value)
-    if not targets:
-        return None
-    return _sha256_text(_canonical_json(targets))
-
-
-def _artifact_package_targets(artifact: UpdateArtifact | None) -> list[dict[str, str]]:
-    if not artifact or not artifact.manifest_json:
-        return []
-    try:
-        manifest = json.loads(artifact.manifest_json)
-    except Exception:
-        return []
-    evidence = ((manifest.get("created") or {}).get("lab_evidence") or {})
-    direct = _normalized_package_targets(evidence.get("packages_requested"))
-    if direct:
-        return direct
-
-    # Older OS artifacts stored only a package count in lab_evidence, but the
-    # signed outer manifest includes the sha256 of package-manifest.json. Read
-    # that immutable file only after verifying it against the signed output
-    # entry; never trust an arbitrary storage_path file by itself.
-    output = next(
-        (item for item in (manifest.get("outputs") or [])
-         if isinstance(item, dict) and item.get("path") == "package-manifest.json"),
-        None,
-    )
-    if not output or not artifact.storage_path:
-        return []
-    try:
-        root = Path(artifact.storage_path).expanduser().resolve()
-        package_manifest = (root / "package-manifest.json").resolve()
-        if root not in package_manifest.parents or not package_manifest.is_file():
-            return []
-        if not hmac.compare_digest(
-            str(output.get("sha256") or "").lower(),
-            _file_sha256(package_manifest).lower(),
-        ):
-            return []
-        return _normalized_package_targets(
-            json.loads(package_manifest.read_text()).get("packages_requested")
-        )
-    except Exception:
-        return []
-
-
-def _artifact_matches_update_packages(
-    artifact: UpdateArtifact | None,
-    package_details,
-) -> bool:
-    """Fail closed when a batch artifact cannot prove the same target set."""
-    expected = _package_targets_fingerprint(package_details)
-    actual = _package_targets_fingerprint(_artifact_package_targets(artifact))
-    return bool(expected and actual and hmac.compare_digest(expected, actual))
-
-
 def _supersede_changed_batch_candidate(
     db: Session,
     update: PendingUpdate,
     reason: str,
 ) -> None:
-    update.status = "superseded"
-    update.resolution_reason = reason
-    update.description = f"{(update.description or '').rstrip()}\n\n{reason}".strip()
-    if update.id is not None:
-        close_targets_for_superseded_updates(
-            db, UpdateTarget, [update.id], reason, device_id=update.scope_id,
-        )
-        for ticket in db.query(ChangeTicket).filter_by(pending_update_id=update.id).all():
-            if ticket.status not in {"deployed", "rolled_back", "rejected", "cancelled"}:
-                ticket.status = "cancelled"
-                ticket.updated_at = now_utc()
+    supersede_changed_batch_candidate(
+        db, update, reason, target_model=UpdateTarget, ticket_model=ChangeTicket,
+        close_targets=close_targets_for_superseded_updates, now_utc=now_utc,
+    )
 
 
 def _release_signer_matches(signed_by: str | None, signer: dict) -> bool:
@@ -8308,84 +8215,13 @@ def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
 
 
 def _os_catalog_refresh_pending_devices() -> None:
-    """
-    Finder alle enheder med apt-baseret CMDB-inventory og reconciler deres
-    seneste package-inventory mod et katalog genereret via
-    _generate_os_update_catalog_candidates() (Headend Docker/arm64-builder,
-    falder tilbage til Ubuntu-metadata uden Docker). Opretter/opdaterer
-    blokerede os_security/os_updates PendingUpdate-rækker med Plan-reference
-    via import_os_catalog_from_lab_apt_list().
-
-    Bruger et system-principal, samme mønster som _os_bundle_auto_build_pending()
-    (U-12: ingen automatisk build/katalog-refresh må tilskrives en rigtig
-    admin-konto der aldrig så eller godkendte det).
-    """
-    discovery_db = SessionLocal()
-    try:
-        inventory_rows = (
-            discovery_db.query(DeviceInventory)
-            .filter(DeviceInventory.package_manager.ilike("%apt%"))
-            .order_by(DeviceInventory.device_id)
-            .all()
-        )
-        devices = [
-            {
-                "device_id": row.device_id,
-                "os_packages": row.os_packages,
-                "os_name": row.os_name,
-                "environment": row.environment,
-            }
-            for row in inventory_rows
-        ]
-    finally:
-        # Never keep a production DB connection checked out while Docker/
-        # Ubuntu metadata network work runs. A dropped connection used to make
-        # every later device in the loop silently miss its plan.
-        discovery_db.close()
-
-    system_user = User(username="system:os-catalog-refresh", role="system", password_hash="")
-    from types import SimpleNamespace as _SimpleNamespace
-
-    for snapshot in devices:
-        device_id = str(snapshot.get("device_id") or "").strip()
-        if not device_id or not snapshot.get("os_packages"):
-            continue
-        try:
-            installed = json.loads(snapshot.get("os_packages") or "{}")
-        except Exception:
-            installed = {}
-        if not isinstance(installed, dict) or not installed:
-            continue
-        try:
-            generated = _generate_os_update_catalog_candidates(
-                installed=installed,
-                device_id=device_id,
-                architecture="arm64",
-                image=_default_ubuntu_image_for_device(_SimpleNamespace(**snapshot)),
-            )
-            device_db = SessionLocal()
-            try:
-                import_os_catalog_from_lab_apt_list(
-                    OsCatalogImportPayload(
-                        device_id=device_id,
-                        apt_list_text=generated["apt_list_text"],
-                        source=f"headend-scheduled-cmdb-refresh:{now_utc():%Y-%m-%d}",
-                        environment=snapshot.get("environment") or "lab",
-                        create_updates=True,
-                    ),
-                    system_user,
-                    device_db,
-                )
-                device_db.commit()
-                log.info("OS-katalogopdagelse: opdateret for %s", device_id)
-            except Exception as exc:
-                device_db.rollback()
-                log.warning("OS-katalogopdagelse: fejl for %s: %s", device_id, exc)
-            finally:
-                device_db.close()
-        except Exception as exc:
-            log.warning("OS-katalogopdagelse: katalog-build fejlede for %s: %s", device_id, exc)
-
+    refresh_os_catalog_devices(
+        session_factory=SessionLocal, inventory_model=DeviceInventory, user_model=User,
+        generate=_generate_os_update_catalog_candidates,
+        default_image=_default_ubuntu_image_for_device,
+        import_catalog=import_os_catalog_from_lab_apt_list,
+        payload_model=OsCatalogImportPayload, now_utc=now_utc, logger=log,
+    )
 
 def _reconcile_python_packages_from_pypi(installed: dict, required_text: str = "") -> dict:
     """
@@ -8533,73 +8369,13 @@ def _upsert_blocked_python_updates_from_plan(
 
 
 def _python_catalog_refresh_pending_devices() -> None:
-    """
-    Finder alle enheder med rapporterede venv_packages og reconciler dem mod
-    PyPI (se _reconcile_python_packages_from_pypi()). Opretter/opdaterer
-    blokerede dependency_updates PendingUpdate-rækker med Plan-reference,
-    samme mønster som _os_catalog_refresh_pending_devices() men for Python.
-    """
-    discovery_db = SessionLocal()
-    try:
-        inventory_rows = (
-            discovery_db.query(DeviceInventory)
-            .filter(DeviceInventory.venv_packages.isnot(None))
-            .order_by(DeviceInventory.device_id)
-            .all()
-        )
-        devices = [
-            {
-                "device_id": row.device_id,
-                "venv_packages": row.venv_packages,
-                "environment": row.environment,
-            }
-            for row in inventory_rows
-        ]
-    finally:
-        discovery_db.close()
-
-    system_user = User(username="system:python-catalog-refresh", role="system", password_hash="")
-    for snapshot in devices:
-        device_id = str(snapshot.get("device_id") or "").strip()
-        if not device_id:
-            continue
-        try:
-            installed = json.loads(snapshot.get("venv_packages") or "{}")
-        except Exception:
-            installed = {}
-        if not isinstance(installed, dict) or not installed:
-            continue
-        try:
-            decisions = _reconcile_python_packages_from_pypi(installed, _edge_requirements_text(_repo_root()))
-            if not decisions:
-                continue
-            created_at = now_utc()
-            environment = snapshot.get("environment") or "lab"
-            plan = {
-                "schema": "dk.froekjaer.timelapse.python_update_plan.v1",
-                "source": "headend-cmdb-pypi-reconcile",
-                "generated_at": created_at.isoformat(),
-                "device_id": device_id,
-                "environment": environment,
-                "decisions": decisions,
-            }
-            stamp = f"{device_id}-{created_at:%Y%m%d-%H%M%S}"
-            plan_path = _write_update_json("python-update-plans", f"{stamp}.json", plan)
-            device_db = SessionLocal()
-            try:
-                _upsert_blocked_python_updates_from_plan(
-                    device_db, device_id, environment, decisions,
-                    f"headend-scheduled-pypi-refresh:{created_at:%Y-%m-%d}", plan_path,
-                )
-                device_db.commit()
-                log.info("Python-katalogopdagelse: opdateret for %s", device_id)
-            except Exception as exc:
-                device_db.rollback()
-                log.warning("Python-katalogopdagelse: fejl for %s: %s", device_id, exc)
-            finally:
-                device_db.close()
-        except Exception as exc:
-            log.warning("Python-katalogopdagelse: katalog-build fejlede for %s: %s", device_id, exc)
+    refresh_python_catalog_devices(
+        session_factory=SessionLocal, inventory_model=DeviceInventory, user_model=User,
+        reconcile=_reconcile_python_packages_from_pypi,
+        requirements_text=lambda: _edge_requirements_text(_repo_root()),
+        write_json=_write_update_json, upsert=_upsert_blocked_python_updates_from_plan,
+        now_utc=now_utc, logger=log,
+    )
 
 
 # ── Automatisk OS bundle builder ──────────────────────────────────────────────

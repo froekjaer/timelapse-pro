@@ -87,7 +87,10 @@ def test_file_policy_accepts_offline_pip_install(tmp_path):
 def _write_fake_bundle(root):
     (root / "packages").mkdir(parents=True)
     (root / "packages" / "requests-2.31.0-py3-none-any.whl").write_bytes(b"fake wheel bytes")
-    (root / "package-manifest.json").write_text(json.dumps({"schema": "timelapse.python_package_manifest.v1"}))
+    (root / "package-manifest.json").write_text(json.dumps({
+        "schema": "timelapse.python_package_manifest.v1",
+        "packages_requested": [{"name": "requests", "available_version": "2.31.0"}],
+    }))
     (root / "verify-installed.sh").write_text(
         "#!/bin/bash\nactual=$(/opt/timelapse/venv/bin/python3 -m pip show requests | awk -F': ' '/^Version:/ {print $2}')\ntest \"$actual\" = '2.31.0'\n"
     )
@@ -192,6 +195,9 @@ def test_bind_accepts_dependency_artifact_on_dependency_update(tmp_path, monkeyp
         update = PendingUpdate(
             update_type="dependency_updates", status="blocked", scope="device",
             scope_id=DEVICE_ID, version="1 pakker",
+            package_details=json.dumps([
+                {"name": "requests", "installed_version": "2.28.0", "available_version": "2.31.0"},
+            ]),
         )
         session.add(update)
         session.commit()
