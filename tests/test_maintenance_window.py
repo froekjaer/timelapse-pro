@@ -81,10 +81,18 @@ def test_naive_now_argument_is_treated_as_utc(tmp_path, monkeypatch):
     assert is_maintenance_window_active(now=naive_now) is True
 
 
-def test_default_now_uses_real_current_time(tmp_path, monkeypatch):
+def test_far_future_marker_fails_open_instead_of_suppressing_indefinitely(tmp_path, monkeypatch):
     marker = tmp_path / "maintenance-until"
     far_future = (datetime.now(UTC) + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
     marker.write_text(far_future)
     monkeypatch.setattr("maintenance_window.MAINTENANCE_MARKER_PATH", marker)
 
-    assert is_maintenance_window_active() is True  # no `now=` passed at all
+    assert is_maintenance_window_active() is False
+
+
+def test_expiry_beyond_30_minute_bound_fails_open(tmp_path, monkeypatch):
+    marker = tmp_path / "maintenance-until"
+    marker.write_text("2026-09-21T03:31:00Z")
+    monkeypatch.setattr("maintenance_window.MAINTENANCE_MARKER_PATH", marker)
+
+    assert is_maintenance_window_active(now=_fixed_now()) is False

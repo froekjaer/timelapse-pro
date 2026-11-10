@@ -24,26 +24,40 @@ silently-suppressed real one.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 MAINTENANCE_MARKER_PATH = Path("/etc/timelapse/maintenance-until")
+MAX_MAINTENANCE_WINDOW = timedelta(minutes=30)
 
 
-def is_maintenance_window_active(now: datetime | None = None) -> bool:
+def maintenance_window_end(now: datetime | None = None) -> datetime | None:
+    """Return the active UTC expiry, or ``None`` (fail open).
+
+    This is also sent to authenticated Edge sync clients so they can avoid
+    treating an announced Headend reboot as a network fault.
+    """
     try:
         raw = MAINTENANCE_MARKER_PATH.read_text().strip()
         if not raw:
-            return False
+            return None
         expiry = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=UTC)
     except (OSError, ValueError) as exc:
         log.debug("Maintenance-window marker unavailable/unparseable (%s) — treating as inactive", exc)
-        return False
+        return None
     current = now if now is not None else datetime.now(UTC)
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
-    return current < expiry
+    expiry = expiry.astimezone(UTC)
+    if not (current < expiry <= current + MAX_MAINTENANCE_WINDOW):
+        log.warning("Maintenance-window marker outside 30-minute safety bound — treating as inactive")
+        return None
+    return expiry
+
+
+def is_maintenance_window_active(now: datetime | None = None) -> bool:
+    return maintenance_window_end(now) is not None
