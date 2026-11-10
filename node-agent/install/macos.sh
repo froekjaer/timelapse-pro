@@ -11,7 +11,8 @@ CONF_DIR="/etc/timelapse"
 CONF_FILE="$CONF_DIR/node-agent.conf"
 PLIST_NAME="dk.froekjaer.timelapse-node-agent"
 PLIST_PATH="/Library/LaunchDaemons/$PLIST_NAME.plist"
-LOG_FILE="/var/log/timelapse-node-agent.log"
+LOG_DIR="/Library/Logs/TimeLapsePro"
+LOG_FILE="$LOG_DIR/node-agent.log"
 VENV="$INSTALL_DIR/venv"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
@@ -116,8 +117,9 @@ step "Konfigurationsfil"
 mkdir -p "$CONF_DIR"
 
 if [ -f "$CONF_FILE" ] && [ "$REPLACE_CONFIG" != "1" ]; then
-    warn "$CONF_FILE eksisterer — brug --replace-config for kontrolleret udskiftning"
-    exit 3
+    warn "$CONF_FILE eksisterer — bevarer indholdet og reparerer kun service/plist/log"
+    chown root:"$SERVICE_GROUP" "$CONF_FILE"
+    chmod 0640 "$CONF_FILE"
 else
     CONF_TMP="$(mktemp "$CONF_DIR/node-agent.conf.XXXXXX")"
     cat > "$CONF_TMP" << EOF
@@ -137,6 +139,20 @@ fi
 
 # ── Launchd plist ─────────────────────────────────────────────────────────
 step "Launchd plist"
+mkdir -p "$LOG_DIR"
+chown "root:$SERVICE_GROUP" "$LOG_DIR"
+chmod 0750 "$LOG_DIR"
+if [ -L "$LOG_FILE" ]; then
+    echo "Afviser symlink som node-agent-log: $LOG_FILE" >&2
+    exit 4
+fi
+if [ -e "$LOG_FILE" ] && [ ! -f "$LOG_FILE" ]; then
+    echo "Afviser ikke-regulær node-agent-log: $LOG_FILE" >&2
+    exit 4
+fi
+[ -e "$LOG_FILE" ] || touch "$LOG_FILE"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_FILE"
+chmod 0640 "$LOG_FILE"
 cat > "$PLIST_PATH" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -169,9 +185,6 @@ cat > "$PLIST_PATH" << EOF
 </dict>
 </plist>
 EOF
-touch "$LOG_FILE"
-chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_FILE"
-chmod 0640 "$LOG_FILE"
 ok "Plist skrevet: $PLIST_PATH"
 
 # ── Start service ─────────────────────────────────────────────────────────

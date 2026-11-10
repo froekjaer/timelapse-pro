@@ -263,6 +263,23 @@ def test_launchd_standard_out_path():
     pytest.skip("LaunchAgent/Daemon plist ikke fundet")
 
 
+def test_macos_installer_uses_service_owned_library_log_directory():
+    """A non-root LaunchDaemon cannot recreate a missing /var/log file.
+
+    Regression for the Headend node-agent's repeated EX_CONFIG crash loop.
+    """
+    installer = Path(PROJECT_ROOT, "node-agent/install/macos.sh").read_text()
+    enroll = Path(PROJECT_ROOT, "deploy/install/enroll_headend_cmdb.sh").read_text()
+    expected = "/Library/Logs/TimeLapsePro/node-agent.log"
+    assert f'LOG_FILE="$LOG_DIR/node-agent.log"' in installer
+    assert 'LOG_DIR="/Library/Logs/TimeLapsePro"' in installer
+    assert 'chown "root:$SERVICE_GROUP" "$LOG_DIR"' in installer
+    assert 'if [ -L "$LOG_FILE" ]' in installer
+    assert 'if [ -e "$LOG_FILE" ] && [ ! -f "$LOG_FILE" ]' in installer
+    assert 'bevarer indholdet og reparerer kun service/plist/log' in installer
+    assert expected in enroll
+
+
 # ── 2. User vs Root Execution ───────────────────────────────────────────────────
 
 @pytest.mark.integration

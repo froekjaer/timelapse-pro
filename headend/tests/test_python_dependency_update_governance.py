@@ -13,7 +13,9 @@ before this chain had anything real to reconcile against.
 import json
 
 import main
-from database import Base, DeviceInventory, PendingUpdate, SessionLocal, UpdateTarget, engine
+import pytest
+from fastapi import HTTPException
+from database import Base, ChangeTicket, DeviceInventory, PendingUpdate, SessionLocal, UpdateArtifact, UpdateTarget, engine
 
 
 class _FakeUser:
@@ -26,6 +28,9 @@ DEVICE_ID = "TL-TESTDEVICE-PYDEPS"
 
 
 def _clean(session):
+    update_ids = [row[0] for row in session.query(PendingUpdate.id).filter_by(scope_id=DEVICE_ID).all()]
+    if update_ids:
+        session.query(ChangeTicket).filter(ChangeTicket.pending_update_id.in_(update_ids)).delete(synchronize_session=False)
     session.query(UpdateTarget).filter(
         UpdateTarget.pending_update_id.in_(
             session.query(PendingUpdate.id).filter_by(scope_id=DEVICE_ID)
@@ -34,6 +39,96 @@ def _clean(session):
     session.query(PendingUpdate).filter_by(scope_id=DEVICE_ID).delete()
     session.query(DeviceInventory).filter_by(device_id=DEVICE_ID).delete()
     session.commit()
+
+
+def test_package_target_fingerprint_ignores_order_and_installed_version():
+    first = [
+        {"name": "Requests", "installed_version": "2.28", "available_version": "2.31"},
+        {"name": "qrcode", "installed_version": "7", "available_version": "8"},
+    ]
+    second = [
+        {"name": "qrcode", "installed_version": "7.1", "available_version": "8"},
+        {"name": "requests", "installed_version": "2.29", "available_version": "2.31"},
+    ]
+    assert main._package_targets_fingerprint(first) == main._package_targets_fingerprint(second)
+
+
+def test_artifact_match_fails_closed_without_signed_package_evidence():
+    artifact = UpdateArtifact(
+        artifact_id="TL-PY-TEST-NO-EVIDENCE",
+        artifact_type="dependency",
+        sha256="0" * 64,
+        manifest_json=json.dumps({"created": {"lab_evidence": {}}}),
+    )
+    details = [{"name": "requests", "available_version": "2.31.0"}]
+    assert main._artifact_matches_update_packages(artifact, details) is False
+
+
+def test_artifact_match_uses_signed_package_targets():
+    details = [{"name": "requests", "installed_version": "2.28.0", "available_version": "2.31.0"}]
+    artifact = UpdateArtifact(
+        artifact_id="TL-PY-TEST-EVIDENCE",
+        artifact_type="dependency",
+        sha256="0" * 64,
+        manifest_json=json.dumps({
+            "created": {"lab_evidence": {"packages_requested": [
+                {"name": "requests", "available_version": "2.31.0"},
+            ]}},
+        }),
+    )
+    assert main._artifact_matches_update_packages(artifact, details) is True
+
+
+def test_final_artifact_gate_rejects_mismatched_signed_package_targets(monkeypatch):
+    update = PendingUpdate(
+        update_type="dependency_updates",
+        scope="device",
+        scope_id=DEVICE_ID,
+        package_details=json.dumps([
+            {"name": "requests", "available_version": "2.31.0"},
+        ]),
+    )
+    artifact = UpdateArtifact(
+        artifact_id="TL-PY-TEST-STALE",
+        artifact_type="dependency",
+        sha256="0" * 64,
+        manifest_json=json.dumps({
+            "created": {"lab_evidence": {"packages_requested": [
+                {"name": "requests", "available_version": "2.30.0"},
+            ]}},
+        }),
+    )
+    monkeypatch.setattr(main, "_find_artifact_for_update", lambda db, candidate: artifact)
+
+    with pytest.raises(HTTPException) as exc:
+        main._assert_update_has_required_artifact(object(), update)
+
+    assert exc.value.status_code == 409
+    assert "matcher ikke den aktuelle kandidat" in str(exc.value.detail)
+
+
+def test_final_artifact_gate_accepts_matching_signed_package_targets(monkeypatch):
+    update = PendingUpdate(
+        update_type="dependency_updates",
+        scope="device",
+        scope_id=DEVICE_ID,
+        package_details=json.dumps([
+            {"name": "requests", "installed_version": "2.28.0", "available_version": "2.31.0"},
+        ]),
+    )
+    artifact = UpdateArtifact(
+        artifact_id="TL-PY-TEST-CURRENT",
+        artifact_type="dependency",
+        sha256="0" * 64,
+        manifest_json=json.dumps({
+            "created": {"lab_evidence": {"packages_requested": [
+                {"name": "requests", "available_version": "2.31.0"},
+            ]}},
+        }),
+    )
+    monkeypatch.setattr(main, "_find_artifact_for_update", lambda db, candidate: artifact)
+
+    assert main._assert_update_has_required_artifact(object(), update) is artifact
 
 
 # ── _infer_os_family_for_python_bundle() ────────────────────────────────────
@@ -153,6 +248,9 @@ def test_upsert_resets_stale_target_on_already_blocked_row():
             update_type="dependency_updates", status="blocked", scope="device",
             scope_id=DEVICE_ID, version="1 pakker",
             description="Plan: /tmp/old-plan.json",
+            package_details=json.dumps([
+                {"name": "requests", "installed_version": "2.28.0", "available_version": "2.31.0", "source_repo": "pypi"},
+            ]),
         )
         session.add(update)
         session.commit()
@@ -175,6 +273,56 @@ def test_upsert_resets_stale_target_on_already_blocked_row():
         session.refresh(target)
         assert update.resolution_reason == "Awaiting Headend-signed offline Python wheel bundle."
         assert target.status == "failed"
+    finally:
+        cleanup = SessionLocal()
+        _clean(cleanup)
+        cleanup.close()
+
+
+def test_changed_package_candidate_supersedes_old_row_instead_of_mutating_it(monkeypatch):
+    Base.metadata.create_all(bind=engine)
+    session = SessionLocal()
+    _clean(session)
+    try:
+        old = PendingUpdate(
+            update_type="dependency_updates", status="pending", scope="device",
+            scope_id=DEVICE_ID, version="1 pakker",
+            description="Plan: /tmp/old-plan.json",
+            package_details=json.dumps([
+                {"name": "requests", "installed_version": "2.27.0", "available_version": "2.30.0"},
+            ]),
+        )
+        session.add(old)
+        session.commit()
+        ticket = ChangeTicket(
+            ticket_id="TL-CT-TEST-OLD-CANDIDATE", title="old", pending_update_id=old.id,
+            status="ready", created_by="test",
+        )
+        session.add(ticket)
+        session.commit()
+        monkeypatch.setattr(main, "_find_artifact_for_update", lambda db, update: None)
+
+        changes = main._upsert_blocked_python_updates_from_plan(
+            session,
+            DEVICE_ID,
+            "lab",
+            {"dependency_updates": {"package_count": 1, "packages": [
+                {"name": "requests", "installed_version": "2.27.0", "available_version": "2.31.0"},
+            ]}},
+            "test-source",
+            "/tmp/new-plan.json",
+        )
+        session.commit()
+
+        session.refresh(old)
+        session.refresh(ticket)
+        assert old.status == "superseded"
+        assert ticket.status == "cancelled"
+        assert changes[0]["status"] == "created"
+        replacement = session.query(PendingUpdate).filter_by(id=changes[0]["id"]).one()
+        assert replacement.id != old.id
+        assert replacement.status == "blocked"
+        assert "2.31.0" in replacement.package_details
     finally:
         cleanup = SessionLocal()
         _clean(cleanup)

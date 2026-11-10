@@ -316,6 +316,15 @@ function isProdReadyUpdate(u: Update) {
   )
 }
 
+function isPreparingUpdate(u: Pick<Update, 'status' | 'resolution_reason'>) {
+  return u.status === 'blocked' && /^Awaiting\b/i.test(u.resolution_reason || '')
+}
+
+function updateStatusLabel(u: Update) {
+  if (isPreparingUpdate(u)) return 'Forberedes'
+  return STATUS_LABELS[u.status] ?? u.status
+}
+
 const STATUS_LABELS: Record<string, string> = {
   pending:     'Afventer',
   prod_ready:  'Prod-klar',
@@ -544,12 +553,15 @@ function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus, flowSt
   }
 
   if (u.status === 'blocked' && (u.update_type === 'os_security' || u.update_type === 'os_updates')) {
+    const preparing = isPreparingUpdate(u)
     return {
       title: 'Edge OS offline update-flow',
-      nextAction: 'Denne Edge OS update er blokeret, indtil lab har bygget og registreret et Headend-signeret offline OS artifact.',
+      nextAction: preparing
+        ? 'Headend forbereder et signeret offline OS artifact. Det er en normal sikkerhedsgate, ikke en deploymentfejl.'
+        : (u.resolution_reason || 'Opdateringen er reelt blokeret og kræver fejlafklaring.'),
       steps: [
         { title: 'Rapporteret', detail: 'Edge/CMDB har rapporteret manglende OS-pakker.', state: 'done' },
-        { title: 'Blokeret', detail: 'Edge må ikke køre apt-get upgrade eller hente direkte fra internet.', state: 'blocked' },
+        { title: preparing ? 'Sikkerhedsgate' : 'Blokeret', detail: 'Edge må ikke køre apt-get upgrade eller hente direkte fra internet.', state: preparing ? 'current' : 'blocked' },
         { title: 'Lab bundle', detail: 'Byg offline apt/dpkg bundle i lab med præcis pakkeliste og test-evidence.', state: 'current' },
         { title: 'Signer artifact', detail: 'Registrer bundle i Headend artifact-kataloget med manifest, sha256 og signatur.', state: 'waiting' },
         { title: 'Godkend', detail: 'Bind artifact til update og godkend deployment.', state: 'waiting' },
@@ -728,7 +740,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApprov
               {u.severity}
             </span>
             <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${statusBadge(u.status)}`}>
-              {prodReady ? 'Prod-klar' : (STATUS_LABELS[u.status] ?? u.status)}
+              {prodReady ? 'Prod-klar' : updateStatusLabel(u)}
             </span>
             {u.environment && (
               <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'all' ? 'bg-sky-50 text-sky-700 border-sky-200' : u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
@@ -766,7 +778,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApprov
             </button>
           </div>
         )}
-        {(u.status === 'blocked' || u.status === 'rolled_back') && (
+        {((u.status === 'blocked' && !isPreparingUpdate(u)) || u.status === 'rolled_back') && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button onClick={() => onApprove(u.id)} disabled={isBusy}
               title="Revurder den blokerede eller tilbagekaldte opdatering og åbn godkendelsesdialogen."

@@ -36,6 +36,7 @@ interface PendingUpdate {
   severity: string
   status: string
   environment: string | null
+  resolution_reason?: string | null
 }
 
 class ApiError extends Error {
@@ -65,12 +66,17 @@ function updateCategory(type: string) {
   return 'other'
 }
 
+function isPreparingUpdate(update: PendingUpdate) {
+  return update.status === 'blocked' && /^Awaiting\b/i.test(update.resolution_reason || '')
+}
+
 function UpdateIndicator({ updates, canConfigure }: { updates: PendingUpdate[]; canConfigure: boolean }) {
   if (!canConfigure) return null
   const security = updates.filter(u => updateCategory(u.update_type) === 'security').length
   const os = updates.filter(u => updateCategory(u.update_type) === 'os').length
   const app = updates.filter(u => updateCategory(u.update_type) === 'app').length
-  const blocked = updates.filter(u => u.status === 'blocked').length
+  const preparing = updates.filter(isPreparingUpdate).length
+  const blocked = updates.filter(u => u.status === 'blocked' && !isPreparingUpdate(u)).length
   const high = updates.filter(u => ['critical', 'high'].includes(String(u.severity || '').toLowerCase())).length
   const hasUpdates = updates.length > 0
   const tone = high > 0 || security > 0 ? 'red' : hasUpdates ? 'amber' : 'emerald'
@@ -92,7 +98,7 @@ function UpdateIndicator({ updates, canConfigure }: { updates: PendingUpdate[]; 
         </p>
         <p className="text-xs opacity-80 mt-0.5">
           {hasUpdates
-            ? `${security} security · ${os} OS · ${app} app · ${blocked} blokeret`
+            ? `${security} security · ${os} OS · ${app} app · ${preparing} forberedes · ${blocked} reelt blokeret`
             : 'OS/App security og funktionelle opdateringer er ajour'}
         </p>
       </div>
