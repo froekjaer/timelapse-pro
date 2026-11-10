@@ -6307,11 +6307,11 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
 
 def _default_update_policy() -> dict:
     return {
-        "os_security": "auto",
+        "os_security": "manual",
         "os_updates": "manual",
-        "application_security": "auto",
+        "application_security": "manual",
         "application_updates": "manual",
-        "timelapse_security": "auto",
+        "timelapse_security": "manual",
         "timelapse_updates": "manual",
         "maintenance_window": "02:00-04:00",
         "staging_required": False,
@@ -6328,7 +6328,7 @@ def _normalise_update_policy(raw_policy: dict | None) -> dict:
     return policy
 
 
-def _merge_update_policy(base: dict, override: dict | None) -> dict:
+def _merge_update_policy(base: dict, override: dict | None, *, allow_auto: bool = False) -> dict:
     merged = dict(base)
     for key, value in _normalise_update_policy(override).items():
         if key.endswith("_required"):
@@ -6338,9 +6338,8 @@ def _merge_update_policy(base: dict, override: dict | None) -> dict:
             merged[key] = value
             continue
         if key in merged:
-            # Manual is the restrictive override. Auto can only win if no stricter
-            # inherited value already exists.
-            if value == "manual" or merged.get(key) == "auto":
+            # Manual is sticky below the global operator-controlled policy.
+            if value == "manual" or merged.get(key) == "auto" or (allow_auto and value == "auto"):
                 merged[key] = value
     return merged
 
@@ -6353,7 +6352,7 @@ def _resolved_update_policy(db: Session, device: Device | None) -> dict:
         defaults = db.query(ConfigDefaults).order_by(ConfigDefaults.id.asc()).first()
         if defaults and getattr(defaults, "system", None):
             sys_cfg = _json.loads(defaults.system)
-            policy = _merge_update_policy(policy, sys_cfg.get("update_policy"))
+            policy = _merge_update_policy(policy, sys_cfg.get("update_policy"), allow_auto=True)
 
         site = db.query(Site).filter_by(id=device.site_id).first() if device.site_id else None
         customer = None

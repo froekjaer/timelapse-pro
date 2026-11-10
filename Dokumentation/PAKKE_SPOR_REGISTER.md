@@ -24,6 +24,19 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### `codex/edge-post-rollout-hardening` — permanent tidssync, root-ejerskab og stale update-autorisation
+
+- **Mandat/session:** Codex, 2026-11-10, direkte fortsættelse af Peters "go" til den kontrollerede Edge1-release og krav om en rigtig, permanent løsning.
+- **Formål/scope:** Luk tre live-fund fra rollout af #318: (1) timesync-timeren kørte, men kendte ikke den allerede provisionerede Headend-URL og kunne derfor ikke korrigere et driftet ur uden GPS; (2) det signerede artifact blev kopieret som `orangepi`, så root-watchdog-scriptet var skrivbart af en ikke-root bruger; (3) en inline sync-policy kunne stadig forsøges efter at den autoritative update-status var ændret, hvilket gav unødig backup/preflight på #361. Ingen reboot eller ny OS-installation indgår.
+- **Berørte domæner/kontrakter:** `edge/scripts/sync-time.sh`, Edge artifact-installation/filrettigheder, update-policy freshness/authorization mellem `headend/edge_sync.py`, `headend/main.py` og `edge/agent.py`, image/release-kontrakter og tests. Security-, availability- og change-authorization trust boundaries.
+- **Base/head:** `origin/main@a794fb51`; branch `codex/edge-post-rollout-hardening`; isoleret worktree genbrugt efter merged #318.
+- **Overlap/restdisposition:** Bygger på merged #318. Åben #298 overlapper update-approval/authorization-domænet og skal rebaseres/genvalidere mod freshness-gaten. #253/#274 bevares som tunnel-/SSH-spor. Ingen af deres rester erstattes. Historisk timesync-arbejde og image-builder-kontrakter genbruges frem for et nyt parallelt subsystem.
+- **Live-evidens:** #358 er VERIFIED/deployed på Edge1; agent, watchdog, tunnel, heartbeat og inventory er aktive. Timesync-loggen viste gentagne `Ingen HTTPS Headend-tidskilde konfigureret`, mens root-beskyttet `/opt/timelapse/edge/bootstrap.yaml` indeholder den korrekte `https://.../api`-URL. Midlertidigt Cloudflare-NTP er kun runtime-state. Watchdogfilen og den tidligere gruppe-skrivbare parent `edge/scripts` er akut korrigeret live til `root:root 0755` uden service-stop. #361 nåede backup/preflight fra et allerede hentet policy-svar, men ingen apt/dpkg-proces kørte; #361/#362/#364 står fortsat `Afventer`. Produktions-defaults er eksplicit sat til `manual` for alle seks update-kategorier, så discovery ikke auto-godkender nye kandidater.
+- **Evidens:** 77 målrettede tests består. Bred suite: 1770 passed, 5 miljø-skips; architecture-ratchet-fejlen blev rettet uden baseline-løft, og de fire GPG-fejl skyldtes macOS' lange tempsti og består 5/5 med `TMPDIR=/tmp`. Endelig gate på 51/51 (architecture, GPG, freshness, policy, release) består. Codex Security scan `9bfa43f4-9e48-400c-98d6-02a5608aad15` gennemgik trust boundaries; én parent-directory-risiko blev fundet og lukket under review, ingen resterende reportable fund.
+- **Næste handling:** Commit/PR/CI/merge og Headend-deploy; byg derefter et nyt signeret app-artifact. Før Edge1-godkendelse: read-back af ticket/artifact og eksplicit brugerbekræftelse. Observer permanent Headend-tidsfallback, root-ejerskab, agent/tunnel/capture efter release. Reboot først derefter.
+- **Blokeringsansvarlig:** Codex aktivt spor.
+- **Opfølgning:** Før ny Edge-release og før Edge1 reboot.
+
 ### `codex/edge-management-recovery` — fail-safe genopretning af Edge-agent og management-tunnel
 
 - **Mandat/session:** Codex, 2026-11-10, efter Peters eksplicitte krav om en permanent løsning på tabet af Edge1-adgang, da `timelapse-edge.service` blev stoppet via den eneste aktive management-kanal.

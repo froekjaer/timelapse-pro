@@ -7,10 +7,43 @@ set -euo pipefail
 HEADEND_URL="${TIMELAPSE_HEADEND_URL:-${HEADEND_URL:-}}"
 NTP_SERVER="${TIMELAPSE_NTP_SERVER:-${NTP_SERVER:-}}"
 LOG="/var/log.hdd/timelapse/time-sync.log"
+BOOTSTRAP_CONFIG="${TIMELAPSE_BOOTSTRAP_CONFIG:-/opt/timelapse/edge/bootstrap.yaml}"
 
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') [time-sync] $*" | tee -a "$LOG" 2>/dev/null || echo "$*"; }
 
 mkdir -p "$(dirname "$LOG")"
+
+# Images already provision the authoritative Headend URL in a root-owned
+# bootstrap file.  Older images did not also duplicate that value into
+# /etc/timelapse/time-sync.env, which left this timer running but unable to
+# use its documented Headend fallback.  Read only the URL from the existing
+# trust anchor, and fail closed if the file can be swapped or is writable by
+# a non-root identity.
+if [[ -z "$HEADEND_URL" && -f "$BOOTSTRAP_CONFIG" ]]; then
+    HEADEND_URL=$(python3 - "$BOOTSTRAP_CONFIG" <<'PY' 2>/dev/null || true
+import os
+import stat
+import sys
+
+import yaml
+
+path = sys.argv[1]
+flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+fd = os.open(path, flags)
+try:
+    meta = os.fstat(fd)
+    if not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022:
+        raise SystemExit(1)
+    with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as handle:
+        data = yaml.safe_load(handle) or {}
+    value = data.get("headend_url")
+    if isinstance(value, str):
+        print(value.strip())
+finally:
+    os.close(fd)
+PY
+    )
+fi
 
 # GPS is the primary source. gpsd can have a valid fix even when chrony is
 # using a stale/non-GPS refclock, so do not infer GPS validity from chrony.

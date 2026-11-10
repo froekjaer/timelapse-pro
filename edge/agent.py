@@ -2674,6 +2674,24 @@ class EdgeAgent:
                 return
 
             if status == "approved":
+                # A consolidated sync response can become stale between its
+                # composition and the first mutating update step (for example
+                # when an operator stops/revokes a ticket).  Retrieved policy
+                # is data, not a durable execution capability: require a
+                # second authoritative read immediately before backup/install.
+                try:
+                    fresh_ok, fresh_policy = self._api._get(f"/updates/policy/{self._device_id}")
+                except Exception as exc:
+                    log.warning("Opdatering %d afventer: frisk autorisation kunne ikke hentes: %s", uid, exc)
+                    return
+                fresh_candidates = fresh_policy.get("pending_updates", []) if fresh_ok and isinstance(fresh_policy, dict) else []
+                fresh = next((item for item in fresh_candidates if item.get("id") == uid), None)
+                expected_artifact_id = ((update.get("artifact") or {}).get("artifact_id"))
+                fresh_artifact_id = (((fresh or {}).get("artifact") or {}).get("artifact_id"))
+                if not fresh or fresh.get("status") != "approved" or fresh_artifact_id != expected_artifact_id:
+                    log.warning("Opdatering %d afventer: autorisation eller artifact-binding er ikke længere aktuel", uid)
+                    return
+                update = fresh
                 ok, reason = verify_update_artifact(update, self._cfg.get("security", {}))
                 if not ok:
                     log.error("Opdatering %d afvist af Edge trust policy: %s", uid, reason)
@@ -2858,6 +2876,12 @@ class EdgeAgent:
             rollback_ready = True
 
             self._report_update(update_id, "installing")
+            if management_changed:
+                scripts_dir = repo / "edge" / "scripts"
+                # Root-executed files are not protected if an unprivileged
+                # account can replace them through a writable parent dir.
+                _os.chown(scripts_dir, 0, 0)
+                scripts_dir.chmod(0o755)
             for item in outputs:
                 rel = Path(str(item["path"]))
                 source = staging / rel
@@ -2866,6 +2890,13 @@ class EdgeAgent:
                 _shutil.copy2(source, dest)
                 if dest.suffix == ".sh":
                     dest.chmod(dest.stat().st_mode | 0o111)
+                if str(rel) in management_runtime_paths:
+                    # These files are executed by root-owned services.  copy2
+                    # deliberately preserves the ownership of an existing
+                    # destination, so a legacy orangepi-owned checkout would
+                    # otherwise remain writable by that account after a
+                    # signed release update.
+                    _os.chown(dest, 0, 0)
 
             if management_changed:
                 # These components run as independent root-owned services.

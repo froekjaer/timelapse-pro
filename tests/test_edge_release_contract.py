@@ -333,6 +333,23 @@ def test_time_sync_falls_back_to_configured_ntp_server_before_headend():
     assert ntp_pos < headend_pos
 
 
+def test_time_sync_discovers_headend_url_from_root_protected_bootstrap():
+    time_sync = _source("edge/scripts/sync-time.sh")
+    assert 'BOOTSTRAP_CONFIG="${TIMELAPSE_BOOTSTRAP_CONFIG:-/opt/timelapse/edge/bootstrap.yaml}"' in time_sync
+    assert 'meta.st_uid != 0 or meta.st_mode & 0o022' in time_sync
+    assert 'get("headend_url")' in time_sync
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in time_sync
+
+
+def test_root_service_runtime_files_are_chowned_after_artifact_copy():
+    agent = _source("edge/agent.py")
+    install = agent.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
+    assert '_os.chown(scripts_dir, 0, 0)' in install
+    assert 'scripts_dir.chmod(0o755)' in install
+    assert "if str(rel) in management_runtime_paths:" in install
+    assert "_os.chown(dest, 0, 0)" in install
+
+
 def test_gps_image_setup_uses_actual_usb_receiver_as_authoritative_clock():
     setup = _source("edge/scripts/setup-gps-time.sh")
     injector = _source("headend/tools/inject_edge_image.py")
