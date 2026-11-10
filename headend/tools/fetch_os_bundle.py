@@ -353,39 +353,44 @@ def deb_metadata_from_index(entry: dict, deb_path: Path) -> dict[str, Any]:
 def install_script(package_file_entries: list[dict[str, Any]]) -> str:
     """Generate the signed, offline-only installer for a bundle.
 
-    Installing a glob of deb files through ``dpkg`` leaves package ordering to
-    chance.  That can unpack a coherent bundle but leave it half configured.
-    Put the signed files in APT's local cache and let APT resolve the order,
-    while ``--no-download`` makes an attempted network fetch fail closed.
-
-    ``apt-get install name=version`` only works for names/versions APT
-    already knows about from its *own* (device-local) ``/var/lib/apt/lists``
-    cache — copying the .debs into ``/var/cache/apt/archives`` does not make
-    them known candidates by itself. On a device that never runs a real
-    ``apt-get update`` (no internet), that local cache is a snapshot from
-    whenever it was last refreshed (e.g. image build time) and will
-    eventually miss newer patch versions Headend just fetched fresh from the
-    real Ubuntu mirror. Found 2026-09-07: an Edge 2 os_security bundle with
-    216 packages failed outright (apt-get install is one atomic transaction)
-    because 2 of them — libpam-modules, linux-libc-dev — weren't resolvable
-    at their target version in Edge 2's local index, even though the correct
-    .deb files were sitting right there in the bundle.
-
-    Pass every signed .deb to APT by absolute local path. APT still resolves
-    ordering and dependencies across the complete transaction, while
-    ``--no-download`` makes a missing dependency fail closed. Do not build a
-    temporary file:// repository here: APT 2.8 can retain relative
-    ``Filename`` entries and reject the transaction with ``Pathname to
-    install is not absolute`` even though every file is already local.
+    A temporary bundle-only APT repository makes every signed version a known
+    candidate even when the Edge's normal package lists are stale.  Scan the
+    repository by absolute path: APT 2.8 otherwise retains relative
+    ``Filename`` entries and rejects the transaction with ``Pathname to
+    install is not absolute``.  Both list refresh and installation are scoped
+    to this repository, and ``--no-download`` makes missing dependencies fail
+    closed instead of falling back to the network.
     """
+    exact_packages = " ".join(
+        _shell_quote(f"{entry['name']}={entry['version']}")
+        for entry in package_file_entries
+    )
     return f"""#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
 # Kun pakker i dette signerede bundle gøres tilgængelige for APT. Der foretages
-# ingen apt update mod internettet eller netværksdownload på Edgen. Absolutte
-# stier er påkrævet af APT 2.8 for lokale .deb-filer.
+# ingen apt update mod internettet eller netværksdownload på Edgen.
+local_repo="$(mktemp -d)"
+local_sourcelist="$(mktemp)"
+local_lists="$(mktemp -d)"
+local_cache="$(mktemp -d)"
+trap 'rm -rf "$local_repo" "$local_sourcelist" "$local_lists" "$local_cache"' EXIT
+chmod 0755 "$local_repo" "$local_lists" "$local_cache"
+mkdir -p "$local_lists/partial" "$local_cache/partial"
+chown _apt:root "$local_lists/partial" "$local_cache/partial"
+chmod 0700 "$local_lists/partial" "$local_cache/partial"
+cp -f packages/*.deb "$local_repo/"
+# Scan den absolutte sti (ikke `.`), så APT 2.8 får absolutte Filename-felter.
+dpkg-scanpackages --multiversion "$local_repo" /dev/null > "$local_repo/Packages"
+chmod -R a+rX "$local_repo" "$local_lists" "$local_cache"
+printf 'deb [trusted=yes] file://%s ./\\n' "$local_repo" > "$local_sourcelist"
+apt-get -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\
+  -o Dir::State::lists="$local_lists" -o Dir::Cache::archives="$local_cache" \\
+  -o APT::Get::List-Cleanup="0" update
 apt-get --no-download --no-install-recommends --allow-downgrades \\
-  --allow-change-held-packages -y install "$PWD"/packages/*.deb
+  --allow-change-held-packages -o Dir::Etc::sourcelist="$local_sourcelist" \\
+  -o Dir::Etc::sourceparts="-" -o Dir::State::lists="$local_lists" \\
+  -o Dir::Cache::archives="$local_cache" -y install {exact_packages}
 # Verificer de faktiske versioner efter APT har afsluttet transaktionen.
 ./verify-installed.sh
 """

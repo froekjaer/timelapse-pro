@@ -59,24 +59,27 @@ def test_bundle_installer_uses_offline_apt_with_exact_versions(tmp_path, monkeyp
     )
 
     installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
-    assert '"$PWD"/packages/*.deb' in installer
+    assert "'demo=2.0' 'helper=3.0'" in installer
     assert "apt-get --no-download" in installer
-    assert "dpkg-scanpackages" not in installer
-    assert "Dir::Etc::sourcelist" not in installer
+    assert 'dpkg-scanpackages --multiversion "$local_repo"' in installer
+    assert 'Dir::Etc::sourcelist="$local_sourcelist"' in installer
     assert "dpkg -i" not in installer
 
 
-def test_install_script_uses_absolute_local_deb_paths():
-    # APT 2.8 rejects relative Filename entries from a temporary file://
-    # index with "Pathname to install is not absolute".  Expanding the glob
-    # after cd gives APT absolute paths to the signed bundle files.
+def test_install_script_indexes_absolute_local_deb_paths():
+    # APT 2.8 rejects relative Filename entries from a temporary file:// index.
+    # Scanning the absolute repository path produces absolute Filename fields.
     script = fetch.install_script([
         {"name": "libpam-modules", "version": "1.4.0-11ubuntu2.8"},
     ])
-    assert 'install "$PWD"/packages/*.deb' in script
+    assert 'dpkg-scanpackages --multiversion "$local_repo"' in script
+    assert '( cd "$local_repo"' not in script
+    assert "'libpam-modules=1.4.0-11ubuntu2.8'" in script
     assert "--no-download" in script
-    assert "apt-get update" not in script
-    assert "/etc/apt" not in script
+    assert 'Dir::State::lists="$local_lists"' in script
+    assert 'Dir::Cache::archives="$local_cache"' in script
+    assert 'chown _apt:root "$local_lists/partial" "$local_cache/partial"' in script
+    assert 'chmod 0700 "$local_lists/partial" "$local_cache/partial"' in script
 
 
 def test_install_script_never_contains_a_literal_network_url():
