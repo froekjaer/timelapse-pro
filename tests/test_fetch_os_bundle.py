@@ -59,58 +59,24 @@ def test_bundle_installer_uses_offline_apt_with_exact_versions(tmp_path, monkeyp
     )
 
     installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
-    assert "cp -f packages/*.deb /var/cache/apt/archives/" in installer
+    assert '"$PWD"/packages/*.deb' in installer
     assert "apt-get --no-download" in installer
-    assert "'demo=2.0'" in installer
-    assert "'helper=3.0'" in installer
+    assert "dpkg-scanpackages" not in installer
+    assert "Dir::Etc::sourcelist" not in installer
     assert "dpkg -i" not in installer
 
 
-def test_install_script_seeds_a_local_apt_index_before_installing():
-    # 2026-09-07: apt-get install name=version only resolves candidates APT
-    # already knows about from the device's own (possibly stale) local
-    # index — copying .debs into /var/cache/apt/archives doesn't register
-    # them as candidates by itself. install_script() must build a throwaway
-    # local file://-only repo from the bundle's own .debs and refresh only
-    # that source's index before installing, so APT can always resolve
-    # exactly what's in the bundle regardless of index staleness.
+def test_install_script_uses_absolute_local_deb_paths():
+    # APT 2.8 rejects relative Filename entries from a temporary file://
+    # index with "Pathname to install is not absolute".  Expanding the glob
+    # after cd gives APT absolute paths to the signed bundle files.
     script = fetch.install_script([
         {"name": "libpam-modules", "version": "1.4.0-11ubuntu2.8"},
     ])
-    assert "dpkg-scanpackages" in script
-    assert "Packages.gz" in script
-    assert "deb [trusted=yes] file://" in script
-    assert "Dir::Etc::sourcelist=" in script
-    assert "apt-get" in script and " update" in script
-    # The update must come strictly before the install, and only ever touch
-    # the local, throwaway sourcelist — never the device's real /etc/apt.
-    update_pos = script.index("Dir::Etc::sourcelist=")
-    install_pos = script.index("--no-download")
-    assert update_pos < install_pos
+    assert 'install "$PWD"/packages/*.deb' in script
+    assert "--no-download" in script
+    assert "apt-get update" not in script
     assert "/etc/apt" not in script
-
-
-def test_install_script_makes_the_local_repo_readable_by_the_apt_sandbox_user():
-    # Regression for update #297 (2026-09-09): apt-get update's actual
-    # file-fetch step runs sandboxed as the unprivileged "_apt" user
-    # (standard on Debian/Ubuntu since the CVE-2016-1252 hardening), not as
-    # whatever user invoked apt-get. mktemp -d defaults to 0700 owned by the
-    # invoking (root) user, which _apt cannot even traverse into — so it
-    # failed reading the local file:// source with "Permission denied"
-    # despite the whole install running as root. Confirmed live via SSH:
-    # /var/lib/apt/lists/partial is 0700, owned by _apt (uid 104).
-    script = fetch.install_script([
-        {"name": "libpam-modules", "version": "1.4.0-11ubuntu2.8"},
-    ])
-    chmod_dir_pos = script.index('chmod 0755 "$local_repo"')
-    mktemp_pos = script.index('local_repo="$(mktemp -d)"')
-    scanpackages_pos = script.index("dpkg-scanpackages")
-    assert mktemp_pos < chmod_dir_pos < scanpackages_pos
-    assert 'chmod -R a+rX "$local_repo"' in script
-    # Must be readable before apt-get update ever runs.
-    chmod_recursive_pos = script.index('chmod -R a+rX "$local_repo"')
-    update_pos = script.index("Dir::Etc::sourcelist=")
-    assert chmod_recursive_pos < update_pos
 
 
 def test_install_script_never_contains_a_literal_network_url():
@@ -118,28 +84,3 @@ def test_install_script_never_contains_a_literal_network_url():
     assert "http://" not in script
     assert "https://" not in script
     assert "ftp://" not in script
-
-
-def test_install_script_cleans_up_its_temporary_local_repo():
-    script = fetch.install_script([{"name": "demo", "version": "1.0"}])
-    assert "trap 'rm -rf" in script
-    assert "EXIT" in script
-
-
-def test_install_resolves_from_the_same_offline_source_as_index_refresh():
-    # APT only considers lists associated with its configured sources. A
-    # local index refreshed with -o sourcelist disappears from the candidate
-    # set when install falls back to the device's normal sources.
-    import shlex
-
-    script = fetch.install_script([{"name": "demo", "version": "2.0"}])
-    commands = [shlex.split(line) for line in script.replace("\\\n", " ").splitlines()
-                if line.startswith("apt-get ")]
-    assert len(commands) == 2
-    for command in commands:
-        options = [command[i + 1] for i, arg in enumerate(command) if arg == "-o"]
-        assert "Dir::Etc::sourcelist=$local_sourcelist" in options
-        assert "Dir::Etc::sourceparts=-" in options
-    assert "update" in commands[0]
-    assert "--no-download" in commands[1]
-    assert commands[1][-2:] == ["install", "demo=2.0"]
