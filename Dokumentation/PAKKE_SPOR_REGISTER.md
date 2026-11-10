@@ -24,15 +24,15 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
-### `codex/fix-os-offline-local-repo` — Edge offline-APT absolut index
+### `codex/fix-update-terminal-and-apt-cache` — terminal update-status + Edge offline-APT cache
 
 - **Mandat/session:** Codex, 2026-11-10, som fortsættelse af Peters ønske om at få update-flowet sikkert end-to-end før præsentationen.
-- **Formål/scope:** Rette den resterende APT 2.8-fejl fra Edge1-kandidat #353 uden at løsne offline-, signatur- eller versionsbindingen.
-- **Berørte domæner/kontrakter:** `headend/tools/fetch_os_bundle.py`, generator-/artifact-validator-tests og update-flowets offline trust boundary.
-- **Base/head:** `origin/main@34457728`; branch `codex/fix-os-offline-local-repo`; PR oprettes efter test/review.
-- **Overlap/restdisposition:** Bygger direkte oven på merged #314/#315. #351 og #353 er fejlede historiske forsøg og må ikke genbruges; #352 er en separat manuel funktionel OS-kandidat og forbliver urørt. Ingen anden åben PR fundet med samme generatorfil ved opstart.
-- **Evidens:** Isoleret Edge1-simulation med de nøjagtige 236 signerede/deponerede `.deb`-filer gav 236 upgrades, 0 nye, 0 fjernede, 0 tilbageholdte. `dpkg-scanpackages` gav 236 absolutte `Filename`-felter; APT-lister, source-list og cache lå kun i `/tmp`; ingen pakker blev installeret.
-- **Næste handling:** Test, sikkerhedsreview, PR/CI/merge, Headend-deploy; derefter ny kandidat/artifact og fuld runtime-observation. Supersede #353 med bevaret auditspor.
+- **Formål/scope:** Lukke to live-fund efter merged/deployet #316: APT 2.8 gav stadig dpkg et relativt percent-encoded cache-navn, og en sen Edge-rapport kunne genåbne en superseded kandidat og udløse et nyt forsøg.
+- **Berørte domæner/kontrakter:** `headend/tools/fetch_os_bundle.py`, `headend/main.py`, generator-/livscyklustests samt update-flowets offline- og change-ticket trust boundaries.
+- **Base/head:** `origin/main@5d2092ae`; branch `codex/fix-update-terminal-and-apt-cache`; PR oprettes efter test/review.
+- **Overlap/restdisposition:** Bygger direkte oven på merged #314/#315/#316. #351, #353 og #354 er fejlede/superseded historiske forsøg og må ikke genbruges; #352 er en separat manuel funktionel OS-kandidat og forbliver urørt. Åben #298 rører det tilstødende update-approval-domæne samt `main.py`/livscyklustests, men ikke de ændrede `get_update_policy`/`report_update`/bundle-generatorfunktioner; dens fremtidige integration skal rebaseres og genvalidere de fælles authorization-tests mod denne leverance.
+- **Evidens:** Generatoren forudfylder nu den isolerede APT-cache med APTs kanoniske `package_version_arch.deb`-navn efter validering af metadata. Edge-policy kræver seneste godkendte, artifact-bundne change ticket; sene rapporter kan ikke ændre `superseded`/`rejected`. 24 generator/validator-tests (1 valgfri fixture skipped) og 33 isolerede Headend-livscyklustests består; ingen pakker installeret i denne validering.
+- **Næste handling:** Sikkerhedsreview, PR/CI/merge og Headend-deploy; start derefter Edge1-agenten lokalt, verificér at de gamle kandidater forbliver terminale, og opret først da et frisk artifact/kandidat med fuld runtime-observation.
 - **Blokeringsansvarlig:** Codex aktivt spor.
 - **Opfølgning:** Efter merge og efter live postflight.
 

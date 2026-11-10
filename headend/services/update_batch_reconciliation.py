@@ -85,6 +85,24 @@ def supersede_changed_batch_candidate(db: Any, update: Any, reason: str, *, targ
             ticket.updated_at = now_utc()
 
 
+def update_policy_ticket_error(db: Any, update: Any, artifact: Any | None, *, ticket_model: Any) -> str | None:
+    """Fail closed unless the newest change ticket authorizes this artifact."""
+    ticket = db.query(ticket_model).filter_by(pending_update_id=update.id).order_by(ticket_model.created_at.desc()).first()
+    if not ticket or ticket.status != "approved":
+        return "change ticket is not approved"
+    if artifact and ticket.artifact_id != artifact.artifact_id:
+        return "approved change ticket is not bound to the selected artifact"
+    return None
+
+
+def ignored_terminal_update_report(update: Any, device_id: str, status: str, *, logger: Any) -> dict[str, Any] | None:
+    """Keep stale Edge reports from reopening administratively terminal work."""
+    if update.status not in {"superseded", "rejected"}:
+        return None
+    logger.warning("Ignoring late Edge report for terminal update %s (%s): device=%s status=%s", update.id, update.status, device_id, status)
+    return {"ok": True, "ignored": True, "reason": f"update_{update.status}"}
+
+
 def inventory_snapshots(session_factory: Callable, inventory_model: Any, *, field: str, apt_only: bool = False) -> list[dict[str, Any]]:
     db = session_factory()
     try:
