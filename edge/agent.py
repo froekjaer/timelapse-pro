@@ -3560,12 +3560,14 @@ class EdgeAgent:
             if ok and resp:
                 log.info("Sync poll sent OK")
                 self._connectivity.report_success()
-                try:
-                    self._headend_maintenance.update(resp.get("headend_maintenance_until"))
-                except OSError as exc:
-                    # Advisory state must fail open and must never abort config,
-                    # key or update-policy processing from a successful sync.
-                    log.warning("Could not persist Headend maintenance announcement: %s", exc)
+                maintenance = getattr(self, "_headend_maintenance", None)
+                if maintenance is not None:
+                    try:
+                        maintenance.update(resp.get("headend_maintenance_until"))
+                    except OSError as exc:
+                        # Advisory state must fail open and must never abort config,
+                        # key or update-policy processing from a successful sync.
+                        log.warning("Could not persist Headend maintenance announcement: %s", exc)
                 self._sync_time_from_headend(resp)
                 if inventory_payload is not None:
                     self._last_inventory = datetime.now(timezone.utc)
