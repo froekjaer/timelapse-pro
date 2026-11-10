@@ -178,6 +178,45 @@ def test_reconcile_finds_outdated_package(monkeypatch):
     }
 
 
+def test_reconcile_prioritizes_required_missing_over_routine_updates(monkeypatch):
+    required = [
+        {
+            "name": "qrcode",
+            "installed_version": "",
+            "available_version": "8.2",
+            "source_repo": "pypi",
+            "reason": "required_missing",
+        },
+        {
+            "name": "websockets",
+            "installed_version": "",
+            "available_version": "17.4",
+            "source_repo": "pypi",
+            "reason": "required_missing",
+        },
+    ]
+    monkeypatch.setattr(
+        main,
+        "_missing_required_packages",
+        lambda installed, required_text, latest: required,
+    )
+
+    import urllib.request
+
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("routine PyPI lookups must wait until required runtime gaps are repaired")
+
+    monkeypatch.setattr(urllib.request, "urlopen", unexpected_lookup)
+
+    decisions = main._reconcile_python_packages_from_pypi(
+        {"fastapi": "0.141.1", "uvicorn": "0.52.4"},
+        "qrcode>=7.4.0\nwebsockets>=12.0\n",
+    )
+
+    assert decisions["dependency_updates"]["package_count"] == 2
+    assert decisions["dependency_updates"]["packages"] == required
+
+
 def test_reconcile_skips_package_already_current(monkeypatch):
     def fake_urlopen(req, timeout=15):
         class _Resp:
