@@ -418,6 +418,21 @@ def build_bundle(
         for n in not_found:
             print(f"  - {n}", file=sys.stderr)
 
+    # A required-missing package is a runtime repair, not a best-effort
+    # upgrade. Never produce/bind a bundle that claims the full requested
+    # target set while omitting one of those repair packages.
+    required_targets = {
+        f"{str(pkg.get('name') or '').strip()}=={str(pkg.get('available_version') or '').strip()}"
+        for pkg in packages
+        if str(pkg.get("reason") or "").strip() == "required_missing"
+    }
+    unresolved_required = sorted(set(not_found) & required_targets)
+    if unresolved_required:
+        raise RuntimeError(
+            "Required runtime package(s) could not be resolved for this device: "
+            + ", ".join(unresolved_required)
+        )
+
     if not package_file_entries:
         raise RuntimeError(f"No .whl files downloaded — aborting bundle creation for {output}")
 
