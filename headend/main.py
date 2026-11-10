@@ -8255,22 +8255,8 @@ def _reconcile_python_packages_from_pypi(installed: dict, required_text: str = "
             log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
         return ""
 
-    # Required runtime dependencies are repair work, not routine upgrades.
-    # Isolate them in their own candidate first: mixing a missing WebSocket
-    # backend with unrelated FastAPI/Pydantic/etc. upgrades turns a small
-    # availability repair into a broad framework change. Once the required
-    # gap is deployed, the next reconciliation may propose normal upgrades.
-    required_missing = _missing_required_packages(installed, required_text, _latest) if required_text else []
-    if required_missing:
-        return {
-            "dependency_updates": {
-                "package_count": len(required_missing),
-                "severity": "medium",
-                "packages": required_missing,
-            }
-        }
-
-    outdated = []
+    outdated = _missing_required_packages(installed, required_text, _latest) if required_text else []  # runtime repair first
+    if outdated: return {"dependency_updates": {"package_count": len(outdated), "severity": "medium", "packages": outdated}}
     for name, installed_version in sorted(installed.items()):
         installed_version = str(installed_version or "").strip()
         if not name or not installed_version:
