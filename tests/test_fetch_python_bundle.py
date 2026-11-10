@@ -320,6 +320,37 @@ def test_unresolvable_package_is_reported_not_found(tmp_path, monkeypatch):
     assert result["not_found"] == ["ghost==9.9"]
 
 
+def test_required_missing_package_must_not_build_as_partial_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "fetch_release_metadata", lambda name, version, verbose=False: {
+        "info": {"requires_dist": [], "requires_python": ">=3.8"},
+        "urls": [{"packagetype": "bdist_wheel", "filename": "demo-2.0-py3-none-any.whl",
+                  "url": "https://files.pythonhosted.org/demo-2.0-py3-none-any.whl",
+                  "digests": {"sha256": ""}, "size": 10}],
+    } if name == "demo" else None)
+
+    def fake_download(entry, dest_dir, verbose=False):
+        path = dest_dir / entry["filename"]
+        path.write_bytes(b"whl")
+        return path
+
+    monkeypatch.setattr(fetch, "download_wheel", fake_download)
+
+    with pytest.raises(RuntimeError, match="Required runtime package"):
+        fetch.build_bundle(
+            [
+                {"name": "demo", "available_version": "2.0"},
+                {
+                    "name": "websockets",
+                    "available_version": "17.4",
+                    "reason": "required_missing",
+                },
+            ],
+            tmp_path / "bundle",
+            "TL-TEST",
+            python_version="3.12.3",
+        )
+
+
 def test_build_bundle_skips_package_whose_requires_python_excludes_the_device(tmp_path, monkeypatch):
     # End-to-end regression for update #292 (2026-09-11): a py3-none-any
     # wheel passes every filename-tag check, but the release's own
