@@ -22,7 +22,8 @@ DATA_ROOT="/Volumes/data-fast"
 START_TS=$(date +%s)
 
 log() {
-  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [post-reboot-verify] $*" | tee -a "$LOG"
+  # launchd already sends stdout/stderr to $LOG; do not append a second copy.
+  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [post-reboot-verify] $*"
   logger -t timelapse-post-reboot-verify -- "$*"
 }
 

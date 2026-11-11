@@ -35,6 +35,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import Column, DateTime, Integer, String, Text, func, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, Device, get_db
@@ -192,8 +193,37 @@ def _normalize_event(ev: dict) -> dict:
     event_type = str(ev.get("event_type", "unknown")).lower()
     logger_name = str(ev.get("logger") or "")
 
+    # macOS emits this launchd lifecycle diagnostic while a reboot is being
+    # prepared.  It describes a missing non-boot helper, not a crashed
+    # TimeLapse service.  Keep it in SIEM for audit, but do not turn it into a
+    # CRITICAL service-crash notification.  The match is deliberately narrow:
+    # real launchd/service failures retain their original severity.
+    lowered = raw.lower()
+    launchd_pre_reboot_noise = re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{4}"
+        r"\s+localhost\s+launchd\[1\]:\s+pre-reboot:\s+non-boot task\s+"
+        r"posix_spawn\(\) failed:\s+2:\s+no such file or directory",
+        lowered.strip(),
+    )
+    if event_type == "service_crash" and launchd_pre_reboot_noise:
+        event_type = "planned_reboot_launchd_noise"
+        severity = "info"
+        category = "maintenance"
+        return {
+            "event_type": event_type,
+            "severity": severity,
+            "category": category,
+            "raw_message": raw,
+            "normalized": {
+                "source": ev.get("source"),
+                "logger": logger_name or None,
+                "process": ev.get("process"),
+                "original_event_type": ev.get("event_type"),
+                "syslog": ev.get("syslog"),
+            },
+        }
+
     if event_type == "log":
-        lowered = raw.lower()
         if "camera not found" in lowered or "no camera found" in lowered:
             event_type = "camera_detection_failed"
             severity = max_severity(severity, "error")
@@ -247,8 +277,10 @@ def record_events(db: Session, device_id: str, events: list[dict]) -> dict:
     _ensure_schema(db)
     inserted = 0
     duplicates = 0
+    errors = 0
+    inserted_indexes: list[int] = []
 
-    for ev in events:
+    for event_index, ev in enumerate(events):
         try:
             norm = _normalize_event(ev)
             occurred = _parse_dt(ev.get("occurred_at", _now().isoformat()))
@@ -275,23 +307,40 @@ def record_events(db: Session, device_id: str, events: list[dict]) -> dict:
                 occurred_at = occurred,
                 dedup_hash  = h,
             )
-            try:
-                db.add(row)
-                db.flush()
-                inserted += 1
-            except Exception:
-                db.rollback()
+            # A duplicate must not roll back new rows that were flushed earlier
+            # in the same batch.  The savepoint contains a possible unique-key
+            # race while the explicit lookup keeps the common replay path cheap.
+            if db.query(SecurityEvent.id).filter(SecurityEvent.dedup_hash == h).first():
                 duplicates += 1
                 continue
+            try:
+                with db.begin_nested():
+                    db.add(row)
+                    db.flush()
+            except IntegrityError:
+                duplicates += 1
+                continue
+            except Exception as exc:
+                errors += 1
+                log.warning("Event-ingest databasefejl: %s — %s", exc, ev)
+                continue
+            inserted += 1
+            inserted_indexes.append(event_index)
 
         except Exception as e:
+            errors += 1
             log.warning("Event-ingest fejl: %s — %s", e, ev)
 
     if inserted:
         db.commit()
         log.info("SIEM: %d events fra %s (%d duplikater ignoreret)",
                  inserted, device_id, duplicates)
-    return {"inserted": inserted, "duplicates": duplicates}
+    return {
+        "inserted": inserted,
+        "duplicates": duplicates,
+        "errors": errors,
+        "inserted_indexes": inserted_indexes,
+    }
 
 
 def prune_old_events(db: Session) -> int:
@@ -522,7 +571,11 @@ async def ingest_events(
             from ai.notify import notify, get_notification_config
             config = get_notification_config(db)
             if config:
-                for ev in events:
+                # Only notify for rows that were actually inserted.  Previously
+                # one new row in a mixed batch caused every replayed duplicate
+                # in that batch to be notified again despite DB deduplication.
+                for event_index in result.get("inserted_indexes", []):
+                    ev = events[event_index]
                     norm = _normalize_event(ev)
                     sev = str(norm.get("severity", "")).upper()
                     if sev in ("CRITICAL", "ERROR"):
