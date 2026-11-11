@@ -1640,7 +1640,7 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
         <button type=\"button\" onclick=\"openShell()\">Åbn terminal</button>
         <button class=\"secondary\" type=\"button\" onclick=\"closeShell()\">Luk terminal</button>
       </div>
-      <div id=\"term\" class=\"term-container\"></div>
+      <div class=\"term-frame\"><div id=\"term\" class=\"term-container\"></div></div>
     </div>
     <script src=\"/mgmt/static/xterm/xterm.js\"></script>
     <script src=\"/mgmt/static/xterm/addon-fit.js\"></script>"""
@@ -1668,21 +1668,39 @@ const term = new Terminal({
 shellFit = new FitAddon.FitAddon();
 term.loadAddon(shellFit);
 term.open(document.getElementById('term'));
-shellFit.fit();
+
+let fitFrame = null;
+function scheduleFit() {
+  if (fitFrame !== null) cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => {
+    // Wait one additional paint: the card geometry and xterm's own viewport
+    // scrollbar must both be final before FitAddon counts visible rows.
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = null;
+      shellFit.fit();
+      if (shellWs && shellWs.readyState === WebSocket.OPEN) {
+        shellWs.send('\\x01RESIZE:' + term.cols + ':' + term.rows);
+      }
+    });
+  });
+}
 
 function sendResize() {
-  if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
-  shellFit.fit();
-  shellWs.send('\\x01RESIZE:' + term.cols + ':' + term.rows);
+  scheduleFit();
 }
 window.addEventListener('resize', sendResize);
+if ('ResizeObserver' in window) {
+  const terminalResizeObserver = new ResizeObserver(scheduleFit);
+  terminalResizeObserver.observe(document.querySelector('.term-frame'));
+}
+scheduleFit();
 
 function openShell() {
   if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
-  shellWs.onopen = () => { term.reset(); term.write('[connected]\\r\\n'); term.focus(); sendResize(); };
-  shellWs.onmessage = (event) => { term.write(event.data); };
+  shellWs.onopen = () => { term.reset(); term.write('[connected]\\r\\n'); term.focus(); scheduleFit(); };
+  shellWs.onmessage = (event) => { term.write(event.data, () => term.scrollToBottom()); };
   shellWs.onclose = () => { term.write('\\r\\n[closed]\\r\\n'); };
 }
 function closeShell() { if (shellWs) shellWs.close(); }
@@ -1712,7 +1730,9 @@ term.onData((data) => {
   h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.55rem 0 0.25rem; }}
   input {{ width: 100%; background: #0f3460; color: #fff; border: 1px solid #334; border-radius: 7px; padding: 0.58rem 0.65rem; font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
-  .term-container {{ width: 100%; height: 420px; background: #050812; border: 1px solid #26385a; border-radius: 8px; padding: 0.5rem; overflow: hidden; }}
+  .term-frame {{ width: 100%; height: 420px; background: #050812; border: 1px solid #26385a; border-radius: 8px; padding: 0.5rem; overflow: hidden; }}
+  .term-container {{ width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }}
+  .term-container .xterm {{ height: 100%; }}
   .term-container .xterm-viewport {{ border-radius: 6px; }}
   .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 0.5rem; }}
   button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; margin-top: 0.7rem; }}
