@@ -300,16 +300,16 @@ for fuld detalje, tests og kendte rests. Polling-transport og xterm.js er bevids
 udskudt — kræver fysisk-edge/live-browser-verifikation. Ingen merge udført; separat PR
 fra #235/#236/#237.
 
-## Edge-terminal xterm.js-genbrug — #239 (afventer fysisk-edge-test)
+## Edge-terminal xterm.js-genbrug — #239 (genoptaget 2026-11-11)
 
 - **Mandat/session:** Claude, 2026-09-13, efter Peters fysiske test viste at #238s direct-Edge-terminal havde en daarlig emulator (Ctrl-C/Tab/pil-taster/Home-End fejlede).
 - **Formaal/scope:** Erstat den haandrullede ANSI-strippende textarea-renderer med xterm.js (samme bibliotek/version som Headends "Aabn terminal"), vendoret lokalt. Behold #238s websocket-transport, multi-IP-robusthed, session-cleanup og local-first audit uaendret. Ny dynamisk resize.
 - **Berørte domæner/kontrakter:** `edge/scripts/totp-service.py`, nye vendorede filer under `edge/scripts/static/xterm/`, `tests/test_edge_technician_terminal_runtime.py`.
-- **Base/head:** PR #239, head **`e6e690588dec95a41ef83f4bfdd3ffb59ae0a589`**, base `main`. `mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`.
-- **Overlap/restdisposition:** Ingen kendt overlap med andre aabne spor. Se `EDGE_TERMINAL_CAPABILITY_REGRESSION_2026-09-13_CLAUDE.md` for fuld genbrugsarkitektur-begrundelse.
-- **Seneste verificerede aktivitet/evidens:** CI groen (Python Syntax Check, Web UI Build Check) efter en `check_dir=False`-rettelse af en StaticFiles-regression. 86/86 relevante tests PASS lokalt. Fysisk Edge-acceptancetest (Ctrl-C, Tab, history, Home/End, resize, offline) IKKE udfoert endnu.
-- **Naeste handling:** Afventer Peters review + fysisk Edge-test foer merge.
-- **Blokeringsansvarlig:** Peter (fysisk test).
+- **Base/head:** PR #239 er replayet på aktuel `main@0705cf0e` i reviewsporet `codex/pr239-reconcile`; eksisterende PR-branch opdateres først efter tests/review. Den historiske head `e6e69058` bruges kun som kilde, ikke som deploykandidat.
+- **Overlap/restdisposition:** Reconcileret mod #238s shell-robusthed, senere TOTP-login/network/camera-ændringer og PR #321s WebSocket-runtime-reparation. Assets er byte-identiske med Headendens installerede `@xterm/xterm 6.0.0` + `@xterm/addon-fit 0.11.0`; ingen parallel terminalrenderer introduceres. Se `EDGE_TERMINAL_CAPABILITY_REGRESSION_2026-09-13_CLAUDE.md` for genbrugsarkitekturen.
+- **Seneste verificerede aktivitet/evidens:** 73/73 terminal-, release- og ISO/image-builder-contract-tests PASS på aktuel main; Python compile, begge vendorede JS-bundles via `node --check`, asset-hashes og `git diff --check` er grønne. App-release-testen kræver alle fire assets; ISO-testen låser både kopiering af hele `edge/` og udpakning af hele `/opt/timelapse`. Resize-input er bounds-checket. Codex Security scan `fcce485e-5e10-4273-b30b-fc9bf70e668b` har komplet dækning og 0 fund. Fysisk Edge-acceptancetest (farver, Ctrl-C, Tab, history, Home/End, resize, offline) er fortsat ikke udført på denne nye releasekandidat.
+- **Naeste handling:** Opdatér PR #239 med den reconcilerede kandidat, kør fuld CI/security-review, merge, byg signeret Edge artifact og udfør kontrolleret runtime-test uden at stoppe agent/tunnel.
+- **Blokeringsansvarlig:** Codex aktivt; Peter kun ved den konkrete manuelle Edge-updatebeslutning, medmindre allerede eksplicit dækket af den aktive fix-anmodning.
 - **Opfoelgning:** Ved fysisk-test-resultat.
 
 ## Capability Register-governance-forslag — #240 (review-klart forslag, IKKE implementeret)

@@ -2267,11 +2267,14 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
                 # group itself - no separate signal needed here.
                 try:
                     cols_s, rows_s = msg[len(RESIZE_PREFIX):].split(":", 1)
+                    cols, rows = int(cols_s), int(rows_s)
+                    if not (2 <= cols <= 500 and 2 <= rows <= 200):
+                        continue
                     fcntl.ioctl(
                         master_fd, termios.TIOCSWINSZ,
-                        struct.pack("HHHH", int(rows_s), int(cols_s), 0, 0),
+                        struct.pack("HHHH", rows, cols, 0, 0),
                     )
-                except (ValueError, OSError):
+                except (ValueError, OSError, struct.error):
                     pass
                 continue
             os.write(master_fd, msg.encode())

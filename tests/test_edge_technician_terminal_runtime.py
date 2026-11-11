@@ -56,3 +56,5 @@ def test_shell_resize_is_handled_via_pty_winsize_ioctl():
     assert "RESIZE_PREFIX" in SOURCE
     assert "TIOCSWINSZ" in SOURCE
     assert "FitAddon" in SOURCE
+    assert "2 <= cols <= 500" in SOURCE
+    assert "2 <= rows <= 200" in SOURCE
