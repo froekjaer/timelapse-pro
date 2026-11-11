@@ -39,6 +39,7 @@ from slowapi.errors import RateLimitExceeded
 
 import json
 import logging
+from connectivity import display_status
 #import os
 import base64
 import hashlib
@@ -3063,7 +3064,7 @@ def list_key_management(
             counts["missing_signing_key"] += 1
         device_rows.append({
             "device_id": device.device_id,
-            "status": device.status,
+            "status": display_status(device),
             "customer_name": device.customer_name,
             "site_name": device.site_name,
             "hostname": inv.hostname if inv else None,
@@ -5655,9 +5656,9 @@ def _business_impact(inv: DeviceInventory | None, device: Device | None, update_
     if device and (device.customer_id or device.site_id):
         score += 8
         factors.append("kunde/site-tilknytning")
-    if device and device.status and device.status != "online":
+    if device and display_status(device) != "online":
         score += 6
-        factors.append(f"enhedsstatus: {device.status}")
+        factors.append(f"enhedsstatus: {display_status(device)}")
     if inv and inv.data_partition_used_pct and inv.data_partition_used_pct >= 85:
         score += 8
         factors.append("høj data-partition udnyttelse")
@@ -5807,7 +5808,7 @@ def list_update_device_matrix(
             "app_version": inv.app_version,
             "customer_name": device.customer_name if device else None,
             "site_name": device.site_name if device else None,
-            "status": device.status if device else "unknown",
+            "status": display_status(device),
             "last_seen": device.last_seen.isoformat() if device and device.last_seen else None,
             "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
             "categories": categories,
@@ -5894,7 +5895,7 @@ def grc_dashboard(
             "environment": inv.environment,
             "customer_name": device.customer_name if device else None,
             "site_name": device.site_name if device else None,
-            "status": device.status if device else "unknown",
+            "status": display_status(device),
             "last_seen": device.last_seen.isoformat() if device and device.last_seen else None,
             "risk_score": max_score,
             "risk_level": "critical" if max_score >= 85 else "high" if max_score >= 70 else "medium" if max_score >= 45 else "low",
