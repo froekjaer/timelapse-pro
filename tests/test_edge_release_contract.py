@@ -33,6 +33,36 @@ def test_edge_release_artifact_contains_all_active_runtime_paths():
         assert runtime_path in collector
 
 
+def test_edge_release_artifact_contains_vendored_terminal_assets():
+    """The direct-Edge terminal must not regress to a textarea after update.
+
+    Execute the real collector and require every offline xterm asset, rather
+    than relying only on the broad ``edge/scripts`` source contract.
+    """
+    import ast
+    import hashlib
+
+    source = _source("headend/main.py")
+    tree = ast.parse(source)
+    func = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_collect_release_outputs"
+    )
+    namespace = {
+        "Path": Path,
+        "list": list,
+        "_file_sha256": lambda path: hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    exec(compile(ast.Module(body=[func], type_ignores=[]), "<collector>", "exec"), namespace)
+    outputs = {item["path"] for item in namespace["_collect_release_outputs"](ROOT)}
+
+    expected = {
+        f"edge/scripts/static/xterm/{name}"
+        for name in ("xterm.js", "xterm.css", "addon-fit.js", "LICENSE")
+    }
+    assert expected <= outputs
+
+
 def test_edge_release_artifact_globs_top_level_edge_modules_not_a_hand_list():
     """Regression: a hand-listed top-level module set went stale on 2026-08-16 —
     edge/update_lifecycle.py shipped in agent.py's hard-required imports without

@@ -105,6 +105,23 @@ def test_dockerfile_contains_edge_qa_and_management_runtime() -> None:
     assert "libnss-mdns" in source
 
 
+def test_iso_builder_carries_offline_xterm_assets_into_flashable_image() -> None:
+    """Fresh ISO/image builds must contain the same direct-Edge terminal UI.
+
+    Docker copies the complete Edge tree into ``/opt/timelapse`` and the
+    injector extracts that whole subtree into the vendor image.  Keep both
+    halves explicit so a future allowlist/cleanup cannot silently drop xterm.
+    """
+    dockerfile = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    injector_source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    xterm_dir = ROOT / "edge" / "scripts" / "static" / "xterm"
+
+    assert "COPY edge/ /opt/timelapse/edge/" in dockerfile
+    assert '"opt/timelapse"' in injector_source
+    for name in ("xterm.js", "xterm.css", "addon-fit.js", "LICENSE"):
+        assert (xterm_dir / name).is_file()
+
+
 def test_flashable_injection_copies_and_enables_all_local_management_units() -> None:
     source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
     for unit in (
