@@ -58,3 +58,13 @@ def test_shell_resize_is_handled_via_pty_winsize_ioctl():
     assert "FitAddon" in SOURCE
     assert "2 <= cols <= 500" in SOURCE
     assert "2 <= rows <= 200" in SOURCE
+
+
+def test_xterm_viewport_has_stable_inner_geometry_and_observed_refit():
+    assert '<div class=\\"term-frame\\"><div id=\\"term\\" class=\\"term-container\\"></div></div>' in SOURCE
+    assert ".term-frame {{ width: 100%; height: 420px;" in SOURCE
+    assert ".term-container {{ width: 100%; height: 100%;" in SOURCE
+    assert ".term-container .xterm {{ height: 100%; }}" in SOURCE
+    assert "new ResizeObserver(scheduleFit)" in SOURCE
+    assert "requestAnimationFrame(() =>" in SOURCE
+    assert "term.scrollToBottom()" in SOURCE
