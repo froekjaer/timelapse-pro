@@ -24,6 +24,19 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### PR #321 — required Python runtime-reparation (`qrcode` + `websockets`)
+
+- **Mandat/session:** ChatGPT diagnosticerede sporet 2026-11-10; Codex fortsætter 2026-11-11 efter Peters eksplicitte “Fiks det gerne”.
+- **Formål/scope:** Genopret Edge1-serviceteknikerterminalen ved at isolere deklarerede, men manglende runtimepakker fra 20 almindelige Python-opgraderinger. Kandidat, signeret offline wheel-bundle og manuel godkendelse bevares som den eksisterende update-mekanisme; ingen løs online `pip install`.
+- **Base/head:** PR #321, branch `chatgpt/isolate-required-python-runtime-repair-20261110`, oprindelig base `main@795a7c6d`; rebases mod aktuel main før merge.
+- **Overlap/restdisposition:** Genbruger det mergede required-missing-flow fra `claude/python-required-missing-20261004`, dependency-artifact-kæden og #314–#319s supersession/fresh-authorization. Docs-only `chatgpt/edge1-websocket-dependency-drift-20261110` er evidensinput og skal reconcileres efter integration, ikke blive en konkurrerende løsning. PR #239 vedrører terminalrendering og er ikke årsagen til den aktuelle WebSocket-upgrade-fejl.
+- **Live-evidens:** Edge1 har `uvicorn 0.52.4`/`fastapi 0.141.1`, men mangler `websockets`, `wsproto` og `qrcode`, selv om installeret `edge/requirements.txt` kræver `websockets>=12.0` og `qrcode>=7.4.0`. TOTP-portalen er aktiv; WebSocket-upgrade lukkes før PTY-handleren. Den brede kandidat #364 indeholder de to runtime-reparationer plus 20 rutineopgraderinger og må ikke bruges som akut fix.
+- **Test/security:** PR-review isolerer required-missing før rutineopgraderinger og gør partielle reparationsbundles fail-closed. Codex Security scan `a7abac12-b05e-4d04-baf7-983a90ba26be` fandt ét lavt exact-pin-identitetsfund i første version; rettet ved normaliseret pakkenavn og regressionsdækket. 71 fokuserede update/artifact/architecture-tests består med eksplicit isoleret SQLite.
+- **Cross-repo/publication:** (2) ingen yderligere påvirkning fundet, evidensbaseret: mekanikken og den konkrete terminalcapability er TimeLapse-specifik. Den generiske capability-health-lære er allerede dækket af Mission Frameworks krav om observeret runtime-health og kræver ingen konkurrerende lokal regel.
+- **Næste handling:** Push reviewfix til #321, grøn CI, merge/deploy Headend, refresh katalog, verificér at #364 supersedes, byg/bind/godkend kun den nye 2-pakke Edge1-kandidat, observer offline installation og genstart af `timelapse-totp.service`, og verificér en ægte terminalsession live. Tilføj derefter requirements-/capability-health-gate som eksplicit opfølgning; Edge2 og øvrige rutineopgraderinger er uden for denne akutte installation.
+- **Blokeringsansvarlig:** Codex aktivt spor; Peters godkendelse kræves fortsat ved den konkrete manuelle update-beslutning, medmindre den eksplicit gives i den aktive browsersekvens.
+- **Opfølgning:** Samme session, før Edge1-terminalen erklæres repareret.
+
 ### `codex/edge-post-rollout-hardening` — permanent tidssync, root-ejerskab og stale update-autorisation
 
 - **Mandat/session:** Codex, 2026-11-10, direkte fortsættelse af Peters "go" til den kontrollerede Edge1-release og krav om en rigtig, permanent løsning.

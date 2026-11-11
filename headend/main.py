@@ -8255,8 +8255,8 @@ def _reconcile_python_packages_from_pypi(installed: dict, required_text: str = "
             log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
         return ""
 
-    # required_text: edge/requirements.txt — required but never installed (Edge1: qrcode, websockets).
-    outdated = _missing_required_packages(installed, required_text, _latest) if required_text else []
+    outdated = _missing_required_packages(installed, required_text, _latest) if required_text else []  # runtime repair first
+    if outdated: return {"dependency_updates": {"package_count": len(outdated), "severity": "medium", "packages": outdated}}
     for name, installed_version in sorted(installed.items()):
         installed_version = str(installed_version or "").strip()
         if not name or not installed_version:

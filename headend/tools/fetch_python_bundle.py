@@ -418,6 +418,29 @@ def build_bundle(
         for n in not_found:
             print(f"  - {n}", file=sys.stderr)
 
+    # A required-missing package is a runtime repair, not a best-effort
+    # upgrade. Never produce/bind a bundle that claims the full requested
+    # target set while omitting one of those repair packages.
+    required_names = {
+        _normalize_pypi_name(str(pkg.get("name") or ""))
+        for pkg in packages
+        if str(pkg.get("reason") or "").strip() == "required_missing"
+    }
+    # Compare normalized package identity rather than the originally planned
+    # version. Pass 2 can legitimately replace that version with an exact pin
+    # required by another candidate; a failure to resolve the pinned wheel is
+    # still a failure to repair the required runtime package.
+    unresolved_required = sorted(
+        target
+        for target in set(not_found)
+        if _normalize_pypi_name(target.partition("==")[0]) in required_names
+    )
+    if unresolved_required:
+        raise RuntimeError(
+            "Required runtime package(s) could not be resolved for this device: "
+            + ", ".join(unresolved_required)
+        )
+
     if not package_file_entries:
         raise RuntimeError(f"No .whl files downloaded — aborting bundle creation for {output}")
 
