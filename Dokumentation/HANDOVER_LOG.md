@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-11-11 14:58 — Codex: PR #325 merged og reboot-/SIEM-rettelse deployet på Headend uden OS-reboot
+
+- **Merge/CI:** PR #325 blev merged som `8a52f03b2c928dc52e0c8832e576da6db04a92e4` efter grøn Python Syntax Check og Web UI Build Check. Lokal gate: 29/29 SIEM-, maintenance- og architecture-ratchet-tests; Codex Security scan `70c2c347-ec89-41d7-888e-2bb6d6826801` completed med fuld scoped coverage og 0 fund.
+- **Scheduler-fix live:** Den konkurrerende globale `pmset`-restart kl. 03:15 er fjernet. Read-back af `pmset -g sched` viser ingen planlagte pmset-events. TimeLapse launchd-jobbet kl. 03:00 er bevaret som eneste natlige rebootmekanisme. Ingen OS-reboot blev udført under leverancen.
+- **Deployment:** Den rene aktive checkout `/Volumes/data-fast/peter-home/projects/timelapse-pro-deploy` blev fast-forwardet fra `8dcea572` til præcis merge-SHA `8a52f03b`. `timelapse-nightly-maintenance` og `timelapse-post-reboot-verify` blev installeret som `root:wheel 755`; installerede SHA-256 matcher repoet byte-for-byte (`d9d4fa...19db0` og `c30eaf...71f`). Plists var allerede byte-identiske og blev derfor ikke unødigt genindlæst. Installeret nightly-script indeholder `EDGE_ANNOUNCEMENT_SECONDS=360` og wait før shutdown; begge scripts er uden den dobbelte `tee -a`-logning.
+- **Service-postflight:** Kun `dk.froekjaer.timelapse-headend` blev kickstartet. Ny PID `93547` er running, lokal og nginx-proxied `/api/health` svarer OK, separat `dk.froekjaer.timelapse-tunnel-sshd` forblev running (`pid 338`, aldrig exited), Edge1 rapporterede frisk `last_seen`, og reverse-tunnelport 2201 bestod TCP-kontrol. Live import fra deploy-checkout klassificerer den eksakte launchd-linje som `planned_reboot_launchd_noise/info/maintenance`, mens en reel service-crash forbliver `service_crash/critical/security`.
+- **Status/næste gate:** Implementeret og aktivt live. Endelig nattelig runtime-accept kan først observeres ved næste planlagte 03:00-kørsel: præcis én boot, 360-sekunders Edge-annonce, post-reboot PASS, tunnel-retur og ingen falske/replayede mails. Edge→Headend-annonce ved et planlagt Edge-reboot er fortsat et separat registreret resthul.
+- **Filer:** Dokumentationsopdatering alene i denne entry: `Dokumentation/HANDOVER_LOG.md`, `Dokumentation/PAKKE_SPOR_REGISTER.md`.
+
 ### Handover 2026-11-11 — Codex: reboot-alarmers tre konkrete årsager isoleret og rettelsesspor startet
 
 - **Mandat:** Peter rapporterede gentagne `service_crash`-mails med samme macOS `pre-reboot ... posix_spawn failed: 2`-linje samt Edge1 `log_tunnel`/`ssh_tunnel_connect_failed` omkring det planlagte natlige Headend-reboot og bad om fortsat permanent løsning.
