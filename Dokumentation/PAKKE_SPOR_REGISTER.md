@@ -24,6 +24,19 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### `codex/headend-reboot-alert-integrity` — én planlagt reboot og sandfærdige SIEM-notifikationer
+
+- **Mandat/session:** Codex, 2026-11-11, efter Peters konkrete reboot-relaterede CRITICAL/WARNING-alarmer og tidligere krav om alarmfri, annonceret Headend-reboot.
+- **Formål/scope:** Fjern den konkurrerende macOS `pmset`-restart kl. 03:15, bevar det applikationsbevidste launchd-job kl. 03:00, installer den allerede udviklede 360-sekunders Headend→Edge-annonce, klassificér den præcise harmløse macOS `pre-reboot ... posix_spawn failed: 2`-signatur som audit-info i stedet for service-crash, og sikre at kun faktisk nyindsatte SIEM-events kan notificere. Ingen reboot udløses under leverancen.
+- **Berørte domæner/kontrakter:** `headend/siem.py`, Headend maintenance-/post-boot-scripts og launchd-runtime. Availability-, alert-integrity- og operations-trust-boundaries.
+- **Base/head:** `origin/main@b7a86445`; branch `codex/headend-reboot-alert-integrity`; isoleret eksisterende worktree.
+- **Overlap/restdisposition:** Bygger på merged #318s Headend→Edge maintenance-annonce. PR #310 rører autoritativ connectivity-status i `headend/itim.py`, men ikke SIEM-ingest eller scripts; ingen kode her superseder dens statusmodel. Edge→Headend planlagt Edge-reboot/ack er fortsat et separat resthul og løses ikke med global suppression.
+- **Live-evidens før rettelse:** `pmset -g sched` viste en separat daglig restart kl. 03:15 samtidig med launchd-jobbet kl. 03:00. `timelapse-post-reboot-verify` (RunAtLoad) startede 03:00:36 og 03:25:29 både 10. og 11. november, hvilket beviser to boots. Live maintenance-script fra 21. september manglede repoets 360-sekunders annonce-wait. SIEM-databasen havde kun én række for 03:00:05-eventen, mens Peter modtog samme hændelse flere gange; kodegennemgang viste at en enkelt ny event i en blandet batch gen-notificerede alle duplikater. Den gamle `pmset`-regel er fjernet live; `pmset -g sched` viser nu ingen planlagte pmset-genstarter.
+- **Review/evidens:** 27 fokuserede SIEM/maintenance-tests samt shell-/Python-syntaks og diff-check består. Codex Security diff-scan `70c2c347-ec89-41d7-888e-2bb6d6826801` er completed med fuld scoped coverage og 0 fund; signaturmatch og DB-fejlklassifikation blev strammet under review.
+- **Næste handling:** PR/CI/merge, deploy Headend-kode og repo-scripts/plists med read-back af hashes; genstart kun Headend-servicen, ikke OS. Observer næste planlagte natlige reboot end-to-end: én boot, Edge-annonce, tunnel-retur, post-reboot PASS og ingen falske/replayede alarmer.
+- **Blokeringsansvarlig:** Codex aktivt spor; Peter skal ikke foretage sig noget nu.
+- **Opfølgning:** Efter merge/deploy og efter næste 03:00-vindue.
+
 ### PR #321 — required Python runtime-reparation (`qrcode` + `websockets`)
 
 - **Mandat/session:** ChatGPT diagnosticerede sporet 2026-11-10; Codex fortsætter 2026-11-11 efter Peters eksplicitte “Fiks det gerne”.

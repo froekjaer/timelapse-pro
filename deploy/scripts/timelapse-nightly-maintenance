@@ -34,7 +34,9 @@ MAINTENANCE_WINDOW_MINUTES=20
 EDGE_ANNOUNCEMENT_SECONDS=360
 
 log() {
-  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [nightly-maintenance] $*" | tee -a "$LOG"
+  # launchd already sends stdout/stderr to $LOG.  tee-ing to the same file made
+  # every line appear twice and obscured whether a job had run twice.
+  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [nightly-maintenance] $*"
   logger -t timelapse-nightly-maintenance -- "$*"
 }
 
